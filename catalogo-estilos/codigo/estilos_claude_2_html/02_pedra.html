@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pedra portuguesa</title>
+<style>
+html,body{margin:0;height:100%;background:#000;overflow:hidden}
+canvas{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:block;background:#000}
+</style>
+</head>
+<body>
+<canvas id="c" width="1080" height="1920"></canvas>
+<script>
+(() => {
+const W = 1080, H = 1920, LOOP = 6000, TAU = Math.PI * 2;
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+function fit() { const s = Math.min(innerWidth / W, innerHeight / H); cv.style.width = W * s + 'px'; cv.style.height = H * s + 'px'; }
+addEventListener('resize', fit); fit();
+
+// ---------- utilidades ----------
+function hash(a, b, c) {
+  let h = (Math.imul(a | 0, 374761393) + Math.imul(b | 0, 668265263) + Math.imul((c || 0) | 0, 1442695041)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177); h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const frac = v => v - Math.floor(v);
+const rgb = (r, g, b, a) => a === undefined ? `rgb(${r | 0},${g | 0},${b | 0})` : `rgba(${r | 0},${g | 0},${b | 0},${a})`;
+function mk(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
+
+// octógono de pedra: quadrilátero encolhido (rejunte) e cantos chanfrados
+function stonePoly(q, g, cuts) {
+  const cx = (q[0] + q[2] + q[4] + q[6]) / 4, cy = (q[1] + q[3] + q[5] + q[7]) / 4;
+  const p = [];
+  for (let i = 0; i < 4; i++) {
+    let x = q[2 * i], y = q[2 * i + 1];
+    const dx = cx - x, dy = cy - y, l = Math.hypot(dx, dy) || 1;
+    p.push(x + dx / l * g, y + dy / l * g);
+  }
+  const o = [];
+  for (let i = 0; i < 4; i++) {
+    const j = (i + 1) % 4;
+    const ax = p[2 * i], ay = p[2 * i + 1], bx = p[2 * j], by = p[2 * j + 1];
+    o.push(ax + (bx - ax) * cuts[i], ay + (by - ay) * cuts[i], bx + (ax - bx) * cuts[j], by + (ay - by) * cuts[j]);
+  }
+  return { o, cx, cy };
+}
+function pathPoly(c, o, dx, dy) {
+  c.moveTo(o[0] + dx, o[1] + dy);
+  for (let i = 2; i < o.length; i += 2) c.lineTo(o[i] + dx, o[i + 1] + dy);
+  c.closePath();
+}
+
+// ---------- 1) o calçadão: ondas de Copacabana, periódicas em P ----------
+const P = 432, RP = 24, CH = 18;               // período vertical = 16 fileiras de 26 px
+const MX = 170, CW_ALL = W + 2 * MX, COLS = 78, CW = CW_ALL / COLS;
+const ROWS = 7 * RP, BH = ROWS * CH;           // 2912 px de calçada
+const A_W = 112, LAMBDA = 700;
+function isBlack(x, y) {
+  const xw = x - MX, th = TAU * xw / LAMBDA;
+  const f = (y + A_W * (Math.sin(th) + 0.16 * Math.sin(2 * th + 0.9))) / P;
+  return frac(f) < 0.5;
+}
+const jx = (r, c) => (hash(((r % RP) + RP) % RP, c, 11) - 0.5) * CW * 0.42;
+const jy = (r, c) => (hash(((r % RP) + RP) % RP, c, 12) - 0.5) * CH * 0.42;
+const vx = (r, c) => c * CW + jx(r, c);
+const vy = (r, c) => r * CH + jy(r, c);
+
+const pave = mk(CW_ALL, BH);
+const glints = [];
+(function buildPave() {
+  const g = pave.getContext('2d');
+  // rejunte de areia, periódico em P
+  const strip = mk(CW_ALL, P), s = strip.getContext('2d');
+  s.fillStyle = rgb(118, 108, 92); s.fillRect(0, 0, CW_ALL, P);
+  for (let i = 0; i < 9000; i++) {
+    const x = hash(i, 1, 3) * CW_ALL, y = hash(i, 2, 3) * P, v = hash(i, 3, 3);
+    s.fillStyle = v < 0.5 ? rgba(70, 62, 52, 0.35) : rgba(180, 168, 146, 0.35);
+    const sz = 1 + hash(i, 4, 3) * 2.2;
+    s.fillRect(x, y, sz, sz);
+  }
+  g.fillStyle = g.createPattern(strip, 'repeat');
+  g.fillRect(0, 0, CW_ALL, BH);
+  function rgba(r, gg, b, a) { return `rgba(${r},${gg},${b},${a})`; }
+
+  for (let r = -1; r <= ROWS; r++) {
+    const rr = ((r % RP) + RP) % RP;
+    for (let c = 0; c < COLS; c++) {
+      const q = [vx(r, c), vy(r, c), vx(r, c + 1), vy(r, c + 1), vx(r + 1, c + 1), vy(r + 1, c + 1), vx(r + 1, c), vy(r + 1, c)];
+      const cuts = [0, 1, 2, 3].map(k => 0.1 + hash(rr * 7 + k, c, 21) * 0.24);
+      const st = stonePoly(q, 1.8, cuts);
+      const black = isBlack(st.cx, st.cy);
+      const h1 = hash(rr, c, 31), h2 = hash(rr, c, 32);
+      let br, bg, bb;
+      if (black) {
+        const v = h1 * 16; br = 20 + v; bg = 20 + v; bb = 23 + v;
+        if (h2 < 0.12) { br += 14; bg += 12; bb += 12; }
+      } else {
+        const v = h1 * 16;
+        br = 234 + v * 0.5; bg = 228 + v * 0.5; bb = 212 + v * 0.5;
+        if (h2 < 0.18) { br -= 6; bg -= 14; bb -= 34; }       // pedra amarelada
+        else if (h2 < 0.30) { br -= 18; bg -= 16; bb -= 10; } // pedra acinzentada
+      }
+      const lift = black ? 34 : 20, drop = black ? 10 : 44;
+      const gr = g.createLinearGradient(st.cx - 9, st.cy - 10, st.cx + 8, st.cy + 10);
+      gr.addColorStop(0, rgb(br + lift, bg + lift, bb + lift * 0.9));
+      gr.addColorStop(0.42, rgb(br, bg, bb));
+      gr.addColorStop(1, rgb(br - drop, bg - drop, bb - drop));
+      // sombra de contato no rejunte
+      g.fillStyle = 'rgba(40,34,26,0.45)';
+      g.beginPath(); pathPoly(g, st.o, 1.2, 1.4); g.fill();
+      g.fillStyle = gr;
+      g.beginPath(); pathPoly(g, st.o, 0, 0); g.fill();
+      // poros e pintas
+      const n = 2 + ((h1 * 4) | 0);
+      for (let k = 0; k < n; k++) {
+        const px = st.cx + (hash(rr, c, 40 + k) - 0.5) * 10, py = st.cy + (hash(rr, c, 50 + k) - 0.5) * 10;
+        g.fillStyle = black ? 'rgba(255,255,255,0.10)' : 'rgba(110,96,74,0.30)';
+        g.beginPath(); g.arc(px, py, 0.5 + hash(rr, c, 60 + k) * 0.8, 0, TAU); g.fill();
+      }
+      // polimento do uso: brilho no topo
+      g.fillStyle = black ? 'rgba(200,210,230,0.07)' : 'rgba(255,252,240,0.35)';
+      g.beginPath(); g.ellipse(st.cx - 3, st.cy - 3.5, 4, 2.3, -0.6, 0, TAU); g.fill();
+      if (r >= 0 && r < RP && hash(rr, c, 77) < (black ? 0.025 : 0.045)) {
+        glints.push({ x: st.cx - 3, y: st.cy - 4, k: 1 + ((hash(rr, c, 78) * 2) | 0), ph: hash(rr, c, 79) * TAU, s: 0.7 + hash(rr, c, 80) * 0.6, b: black });
+      }
+    }
+  }
+  // manchas de uso (periódicas)
+  for (let i = 0; i < 26; i++) {
+    const x = hash(i, 9, 90) * CW_ALL, y = hash(i, 8, 90) * P, rad = 60 + hash(i, 7, 90) * 160;
+    for (let k = -1; k <= 7; k++) {
+      const gr = g.createRadialGradient(x, y + k * P, 0, x, y + k * P, rad);
+      gr.addColorStop(0, 'rgba(90,70,40,0.07)'); gr.addColorStop(1, 'rgba(90,70,40,0)');
+      g.fillStyle = gr; g.fillRect(x - rad, y + k * P - rad, rad * 2, rad * 2);
+    }
+  }
+})();
+
+// ---------- 2) tartaruga: pedrinhas fixas no corpo, cada uma muda de cor ----------
+const TW = 1080, TH = 940, OX = 540, OY = 500, TC = 17, TS = 1.28;
+const TCOLS = Math.ceil(TW / TC), TROWS = Math.ceil(TH / TC);
+const tjx = (r, c) => (hash(r, c, 101) - 0.5) * TC * 0.4;
+const tjy = (r, c) => (hash(r, c, 102) - 0.5) * TC * 0.4;
+const tcells = [];
+for (let r = 0; r < TROWS; r++) for (let c = 0; c < TCOLS; c++) {
+  const q = [c * TC + tjx(r, c), r * TC + tjy(r, c), (c + 1) * TC + tjx(r, c + 1), r * TC + tjy(r, c + 1),
+             (c + 1) * TC + tjx(r + 1, c + 1), (r + 1) * TC + tjy(r + 1, c + 1), c * TC + tjx(r + 1, c), (r + 1) * TC + tjy(r + 1, c)];
+  const cuts = [0, 1, 2, 3].map(k => 0.12 + hash(r * 5 + k, c, 103) * 0.22);
+  const st = stonePoly(q, 1.7, cuts);
+  tcells.push({ q, o: st.o, x: st.cx - OX, y: st.cy - OY, h: hash(r, c, 104), shade: (hash(r, c, 105) * 3) | 0 });
+}
+// paleta da tartaruga (pedras de calçada: basalto, calcário, ocre, vermelho)
+const PAL = {
+  1: [34, 32, 33],     // contorno basalto
+  2: [158, 70, 40],    // casco ferrugem
+  3: [200, 140, 62],   // casco ocre
+  4: [228, 186, 112],  // casco ocre claro
+  5: [112, 50, 34],    // borda do casco
+  6: [134, 128, 104],  // placas de pele (cinza-oliva)
+  7: [232, 222, 198],  // rejunte claro da pele
+  9: [240, 236, 226],  // brilho do olho
+};
+const SHADES = {};
+for (const id in PAL) {
+  const [r, g, b] = PAL[id];
+  SHADES[id] = [0, 1, 2].map(s => {
+    const m = 0.9 + s * 0.08;
+    return { base: rgb(r * m, g * m, b * m), dark: rgb(r * m * 0.62, g * m * 0.6, b * m * 0.58), light: rgb(Math.min(255, r * m + 40), Math.min(255, g * m + 38), Math.min(255, b * m + 34)) };
+  });
+}
+const SCUTES = [[0, -0.66], [0, -0.33], [0, 0], [0, 0.33], [0, 0.64],
+  [0.5, -0.48], [-0.5, -0.48], [0.58, -0.14], [-0.58, -0.14], [0.55, 0.2], [-0.55, 0.2], [0.42, 0.52], [-0.42, 0.52]];
+
+let SG = { d: 0, h: 0, p: 0, len: 1 };
+function seg(px, py, ax, ay, bx, by, r0, r1) {
+  const vx_ = bx - ax, vy_ = by - ay, ll = vx_ * vx_ + vy_ * vy_, len = Math.sqrt(ll);
+  let h = ((px - ax) * vx_ + (py - ay) * vy_) / ll; h = h < 0 ? 0 : h > 1 ? 1 : h;
+  const dx = px - ax - vx_ * h, dy = py - ay - vy_ * h;
+  SG.d = Math.hypot(dx, dy) - (r0 + (r1 - r0) * h); SG.h = h; SG.p = (dx * -vy_ + dy * vx_) / len; SG.len = len;
+  return SG.d;
+}
+// placas de pele: voronoi barato em coordenadas da parte
+function plates(u, v, size, salt) {
+  const gx = Math.floor(u / size), gy = Math.floor(v / size);
+  let d1 = 1e9, d2 = 1e9;
+  for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) {
+    const cx = (gx + i + 0.2 + 0.6 * hash(gx + i, gy + j, salt)) * size, cy = (gy + j + 0.2 + 0.6 * hash(gx + i, gy + j, salt + 1)) * size;
+    const d = Math.hypot(u - cx, v - cy);
+    if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) d2 = d;
+  }
+  return d2 - d1;
+}
+
+const LIMB = { fl: [0, 0, 0, 0, 0, 0], fr: [0, 0, 0, 0, 0, 0], rl: [0, 0, 0, 0], rr: [0, 0, 0, 0], hx: 0 };
+function poseTurtle(T) {
+  const w = TAU * 2 * T;                       // braçada a cada 3 s
+  for (const s of [1, -1]) {
+    const a1 = 0.18 + 0.62 * Math.sin(w);
+    const a2 = a1 + 0.5 + 0.3 * Math.sin(w - 1.1);
+    const ax = s * 112, ay = -96;
+    const mx = ax + s * Math.cos(a1) * 128, my = ay + Math.sin(a1) * 128;
+    const tx = mx + s * Math.cos(a2) * 140, ty = my + Math.sin(a2) * 140;
+    const L = s > 0 ? LIMB.fr : LIMB.fl;
+    L[0] = ax; L[1] = ay; L[2] = mx; L[3] = my; L[4] = tx; L[5] = ty;
+    const b = 1.05 + 0.28 * Math.sin(w + 2.3);
+    const bx = s * 86, by = 152;
+    const R = s > 0 ? LIMB.rr : LIMB.rl;
+    R[0] = bx; R[1] = by; R[2] = bx + s * Math.cos(b) * 104; R[3] = by + Math.sin(b) * 104;
+  }
+  LIMB.hx = 7 * Math.sin(TAU * T + 0.6);
+}
+function classify(x, y, hRand) {
+  // casco
+  const yy = y - 22;
+  const rx = 166 - 26 * clamp(yy / 210, 0, 1) + 6 * clamp(-yy / 200, 0, 1), ry = 214;
+  const nx = x / rx, ny = yy / ry, rr = Math.hypot(nx, ny);
+  const dS = (rr - 1) * 166;
+  if (dS < 1) {
+    if (dS > -10) return 1;
+    if (rr > 0.86) {
+      const ang = Math.atan2(ny, nx);
+      if (frac(ang / TAU * 26) < 0.16) return 1;
+      return hRand < 0.3 ? 2 : 5;
+    }
+    if (rr > 0.81) return 1;
+    let d1 = 1e9, d2 = 1e9, bi = 0;
+    for (let i = 0; i < SCUTES.length; i++) {
+      const dx = x - SCUTES[i][0] * rx, dy = yy - SCUTES[i][1] * ry, d = Math.hypot(dx, dy);
+      if (d < d1) { d2 = d1; d1 = d; bi = i; } else if (d < d2) d2 = d;
+    }
+    if (d2 - d1 < 13) return 1;
+    const sx = SCUTES[bi][0] * rx, sy = SCUTES[bi][1] * ry;
+    const v = d1 / 30 + 0.55 * Math.sin(Math.atan2(yy - sy, x - sx) * 5 + bi * 1.7) + hRand * 0.7;
+    return v < 1.0 ? 4 : v < 1.9 ? 3 : 2;
+  }
+  // cabeça e pescoço
+  const hx = LIMB.hx;
+  const dH = Math.min((Math.hypot(x - hx, (y + 254) * 0.9) - 60), seg(x, y, 0, -170, hx, -226, 40, 46));
+  if (dH < 1) {
+    if (dH > -9) return 1;
+    if (Math.hypot(Math.abs(x - hx) - 33, y + 266) < 13) return y < -270 ? 9 : 1;
+    return plates(x - hx, y + 250, 30, 7) < 7 ? 7 : 6;
+  }
+  // nadadeiras
+  let best = 1e9, pu = 0, pv = 0;
+  for (const L of [LIMB.fl, LIMB.fr]) {
+    const d1 = seg(x, y, L[0], L[1], L[2], L[3], 42, 40); if (d1 < best) { best = d1; pu = SG.h * SG.len; pv = SG.p; }
+    const d2 = seg(x, y, L[2], L[3], L[4], L[5], 40, 8); if (d2 < best) { best = d2; pu = 128 + SG.h * SG.len; pv = SG.p; }
+  }
+  for (const R of [LIMB.rl, LIMB.rr]) {
+    const d = seg(x, y, R[0], R[1], R[2], R[3], 32, 14); if (d < best) { best = d; pu = SG.h * SG.len + 500; pv = SG.p; }
+  }
+  const dT = seg(x, y, 0, 200, 0, 256, 17, 5); if (dT < best) { best = dT; pu = 900; pv = 0; }
+  if (best < 1) {
+    if (best > -9) return 1;
+    return plates(pu, pv + 200, 27, 13) < 6.5 ? 7 : 6;
+  }
+  return 0;
+}
+
+const tCan = mk(TW, TH), tc = tCan.getContext('2d');
+const shCan = mk(TW / 6, TH / 6), shc = shCan.getContext('2d');
+const shCan2 = mk(TW / 6 + 20, TH / 6 + 20), shc2 = shCan2.getContext('2d');
+const ids = new Uint8Array(tcells.length);
+function drawTurtle(T, caust, cOffX, cOffY) {
+  poseTurtle(T);
+  tc.setTransform(1, 0, 0, 1, 0, 0);
+  tc.globalCompositeOperation = 'source-over';
+  tc.clearRect(0, 0, TW, TH);
+  for (let i = 0; i < tcells.length; i++) ids[i] = classify(tcells[i].x / TS, tcells[i].y / TS, tcells[i].h);
+  // rejunte sob as pedras
+  tc.fillStyle = rgb(92, 82, 68);
+  tc.beginPath();
+  for (let i = 0; i < tcells.length; i++) if (ids[i]) { const q = tcells[i].q; tc.moveTo(q[0] - 1, q[1] - 1); tc.lineTo(q[2] + 1, q[3] - 1); tc.lineTo(q[4] + 1, q[5] + 1); tc.lineTo(q[6] - 1, q[7] + 1); tc.closePath(); }
+  tc.fill();
+  // três passes por cor e tom: sombra, corpo, brilho
+  for (const id in SHADES) {
+    for (let s = 0; s < 3; s++) {
+      const sh = SHADES[id][s];
+      let any = false;
+      tc.beginPath();
+      for (let i = 0; i < tcells.length; i++) if (ids[i] == id && tcells[i].shade === s) { pathPoly(tc, tcells[i].o, 0.9, 1.1); any = true; }
+      if (!any) continue;
+      tc.fillStyle = sh.dark; tc.fill();
+      tc.beginPath();
+      for (let i = 0; i < tcells.length; i++) if (ids[i] == id && tcells[i].shade === s) pathPoly(tc, tcells[i].o, -0.5, -0.6);
+      tc.fillStyle = sh.base; tc.fill();
+      tc.beginPath();
+      for (let i = 0; i < tcells.length; i++) if (ids[i] == id && tcells[i].shade === s) { const c = tcells[i]; const cx = c.x + OX - 3, cy = c.y + OY - 3.5; tc.moveTo(cx + 3.5, cy); tc.ellipse(cx, cy, 3.5, 2, -0.6, 0, TAU); }
+      tc.fillStyle = sh.light; tc.fill();
+    }
+  }
+  // luz d'água por cima das pedras da tartaruga
+  // sombra suave
+  shc.setTransform(1, 0, 0, 1, 0, 0);
+  shc.clearRect(0, 0, shCan.width, shCan.height);
+  shc.globalCompositeOperation = 'source-over';
+  shc.drawImage(tCan, 0, 0, shCan.width, shCan.height);
+  shc.globalCompositeOperation = 'source-in';
+  shc.fillStyle = 'rgba(8,10,20,1)'; shc.fillRect(0, 0, shCan.width, shCan.height);
+  shc2.clearRect(0, 0, shCan2.width, shCan2.height);
+  shc2.filter = 'blur(2.5px)';
+  shc2.drawImage(shCan, 10, 10);
+  shc2.filter = 'none';
+}
+
+// ---------- 3) luz do sol filtrada pela água (cáusticas) ----------
+const CWc = 162, CHc = 288;
+const caust = mk(CWc, CHc), cc = caust.getContext('2d');
+const cimg = cc.createImageData(CWc, CHc);
+function drawCaustics(T) {
+  const ph = TAU * T, d = cimg.data;
+  let k = 0;
+  for (let j = 0; j < CHc; j++) {
+    const y = j * 0.055;
+    for (let i = 0; i < CWc; i++) {
+      const x = i * 0.055;
+      const a = Math.sin(x * 1.7 + y * 0.5 + 1.3 * Math.sin(y * 1.1 - ph) + ph);
+      const b = Math.sin(-x * 0.9 + y * 1.6 + 1.2 * Math.sin(x * 1.3 + 2 * ph) - 2 * ph);
+      const c = Math.sin(x * 0.5 - y * 1.9 + 1.1 * Math.sin(x * 0.8 + y * 0.6 + ph) + ph);
+      const n1 = Math.abs(a + b) * 0.5, n2 = Math.abs(b + c) * 0.5;
+      let L = Math.pow(1 - Math.min(n1, 1), 18) + Math.pow(1 - Math.min(n2, 1), 18) * 0.85;
+      L = Math.min(1, Math.max(0, L - 0.12) / 0.88);
+      d[k++] = 255; d[k++] = 244; d[k++] = 214; d[k++] = (L * 255) | 0;
+    }
+  }
+  cc.putImageData(cimg, 0, 0);
+}
+
+// ---------- 4) pedrinhas soltas afundando (primeiro plano) ----------
+const PEB = [];
+const pebPal = [[232, 226, 210], [34, 33, 36], [232, 226, 210], [158, 70, 40], [34, 33, 36], [232, 226, 210]];
+for (let i = 0; i < 6; i++) {
+  const sz = 34 + hash(i, 1, 200) * 14, c = mk(96, 96), g = c.getContext('2d');
+  const base = pebPal[i];
+  const q = [48 - sz / 2, 48 - sz / 2, 48 + sz / 2, 48 - sz / 2 + 4, 48 + sz / 2 - 3, 48 + sz / 2, 48 - sz / 2 + 2, 48 + sz / 2 - 2];
+  const st = stonePoly(q, 0, [0.2, 0.28, 0.16, 0.25]);
+  const gr = g.createLinearGradient(48 - sz / 2, 48 - sz / 2, 48 + sz / 2, 48 + sz / 2);
+  gr.addColorStop(0, rgb(base[0] + 50, base[1] + 48, base[2] + 44)); gr.addColorStop(0.45, rgb(...base)); gr.addColorStop(1, rgb(base[0] * 0.5, base[1] * 0.5, base[2] * 0.5));
+  g.fillStyle = gr; g.beginPath(); pathPoly(g, st.o, 0, 0); g.fill();
+  g.fillStyle = 'rgba(255,250,235,0.35)'; g.beginPath(); g.ellipse(40, 38, sz * 0.2, sz * 0.09, -0.6, 0, TAU); g.fill();
+  const s = mk(140, 140), sg = s.getContext('2d');
+  sg.filter = 'blur(9px)'; sg.fillStyle = 'rgba(10,12,22,0.55)'; sg.beginPath(); sg.ellipse(70, 70, sz * 0.48, sz * 0.44, 0, 0, TAU); sg.fill();
+  PEB.push({ c, s, sz, x: 90 + hash(i, 2, 200) * 900, y: -120 + hash(i, 3, 200) * 1500, ph: i / 6 + hash(i, 4, 200) * 0.08, dx: (hash(i, 5, 200) - 0.5) * 140, rot: hash(i, 6, 200) * TAU, sp: (hash(i, 7, 200) - 0.5) * 1.2 });
+}
+
+// ---------- 5) sombra de coqueiro (camada mais próxima) ----------
+const frond = mk(1400, 600);
+(function buildFrond() {
+  const raw = mk(1400, 600), g = raw.getContext('2d');
+  g.fillStyle = '#000'; g.strokeStyle = '#000';
+  const P0 = [60, 300], P1 = [700, 200], P2 = [1340, 360];
+  const at = t => [(1 - t) * (1 - t) * P0[0] + 2 * (1 - t) * t * P1[0] + t * t * P2[0], (1 - t) * (1 - t) * P0[1] + 2 * (1 - t) * t * P1[1] + t * t * P2[1]];
+  g.lineWidth = 14; g.beginPath(); g.moveTo(...P0); g.quadraticCurveTo(...P1, ...P2); g.stroke();
+  for (let i = 0; i < 46; i++) {
+    const t = 0.04 + i / 46 * 0.94, [x, y] = at(t), [x2, y2] = at(Math.min(1, t + 0.01));
+    const ang = Math.atan2(y2 - y, x2 - x);
+    const len = 250 * Math.sin(Math.PI * Math.min(1, t * 1.1)) + 40;
+    for (const side of [1, -1]) {
+      const a = ang + side * (0.75 + 0.1 * hash(i, side, 300));
+      const ex = x + Math.cos(a) * len, ey = y + Math.sin(a) * len;
+      const nx = -Math.sin(a), ny = Math.cos(a);
+      g.beginPath(); g.moveTo(x + nx * 9, y + ny * 9);
+      g.quadraticCurveTo((x + ex) / 2 + nx * 14, (y + ey) / 2 + ny * 14 + 20, ex, ey + 18);
+      g.quadraticCurveTo((x + ex) / 2 - nx * 6, (y + ey) / 2 - ny * 6 + 14, x - nx * 9, y - ny * 9);
+      g.fill();
+    }
+  }
+  const f = frond.getContext('2d');
+  f.filter = 'blur(10px)'; f.drawImage(raw, 0, 0);
+})();
+
+// ---------- composição ----------
+let cam = { x: 0, y: 0, r: 0, z: 1 };
+function layer(f) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.translate(W / 2, H / 2);
+  ctx.rotate(cam.r * f);
+  const z = 1 + (cam.z - 1) * f; ctx.scale(z, z);
+  ctx.translate(-W / 2 + cam.x * f, -H / 2 + cam.y * f);
+}
+
+function frame(ts) {
+  const ms = ((ts % LOOP) + LOOP) % LOOP, T = ms / LOOP, ph = TAU * T;
+  cam.x = 24 * Math.sin(ph); cam.y = 16 * Math.sin(2 * ph + 0.7); cam.r = 0.013 * Math.sin(ph + 1.2); cam.z = 1.02 + 0.012 * Math.sin(ph + 0.3);
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  ctx.fillStyle = '#16140f'; ctx.fillRect(0, 0, W, H);
+
+  // camada 1: calçada rolando (2 períodos de onda a cada 6 s)
+  const s = (2 * P * T) % P;
+  const py0 = -200 - P + s;
+  layer(1);
+  ctx.drawImage(pave, -MX, py0);
+  // brilhos de sol nas pedras
+  ctx.globalCompositeOperation = 'lighter';
+  for (const gl of glints) {
+    const I = Math.pow(Math.max(0, Math.sin(ph * gl.k + gl.ph)), 22) * (gl.b ? 0.8 : 1);
+    if (I < 0.03) continue;
+    for (let k = 0; k < 7; k++) {
+      const x = gl.x - MX, y = gl.y + py0 + k * P;
+      if (y < -60 || y > H + 60) continue;
+      const r = 22 * gl.s * I;
+      const gr = ctx.createRadialGradient(x, y, 0, x, y, r);
+      gr.addColorStop(0, `rgba(255,246,220,${0.95 * I})`); gr.addColorStop(1, 'rgba(255,230,180,0)');
+      ctx.fillStyle = gr; ctx.fillRect(x - r, y - r, 2 * r, 2 * r);
+      ctx.fillStyle = `rgba(255,250,235,${0.85 * I})`;
+      ctx.fillRect(x - r * 1.4, y - 0.8, r * 2.8, 1.6); ctx.fillRect(x - 0.8, y - r * 1.4, 1.6, r * 2.8);
+    }
+  }
+  ctx.globalCompositeOperation = 'source-over';
+
+  // camada 2: luz d'água passando pelas pedrinhas
+  drawCaustics(T);
+  layer(1.25);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.38;
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(caust, -W * 0.1, -H * 0.1, W * 1.2, H * 1.2);
+  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+
+  // camada 3: tartaruga (mais perto) e sua sombra no chão
+  const w = TAU * 2 * T;
+  const tx = W / 2 + 30 * Math.sin(ph), ty = 1010 - 22 * Math.sin(w - 0.9) + 10 * Math.sin(ph + 0.4);
+  const head = 0.075 * Math.sin(ph + 0.4);
+  drawTurtle(T, caust, -W * 0.1 - (tx - OX) + 60, -H * 0.1 - (ty - OY));
+  layer(1.0);
+  ctx.save(); ctx.translate(tx + 58, ty + 92); ctx.rotate(head); ctx.scale(0.97, 0.97);
+  ctx.globalAlpha = 0.62; ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(shCan2, -OX - 60, -OY - 60, TW + 120, TH + 120);
+  ctx.restore(); ctx.globalAlpha = 1;
+  layer(1.6);
+  ctx.save(); ctx.translate(tx, ty); ctx.rotate(head);
+  ctx.drawImage(tCan, -OX, -OY);
+  ctx.restore();
+  // a mesma luz d'água, mais alta, varrendo a tartaruga e o chão
+  layer(1.7);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.12;
+  ctx.drawImage(caust, -W * 0.15 + 70, -H * 0.15 + 40, W * 1.3, H * 1.3);
+  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+
+  // camada 4: pedrinhas soltas afundando
+  layer(2.1);
+  for (const p of PEB) {
+    const u = frac(T + p.ph);
+    const a = smooth(0, 0.16, u) * (1 - smooth(0.82, 1, u));
+    if (a <= 0.001) continue;
+    const x = p.x + p.dx * u, y = p.y + 560 * u;
+    const sc = 1.25 - 0.4 * u, off = 70 - 46 * u;
+    ctx.globalAlpha = a * 0.9;
+    ctx.drawImage(p.s, x - 70 * sc + off, y - 70 * sc + off * 1.3, 140 * sc, 140 * sc);
+    ctx.globalAlpha = a;
+    ctx.save(); ctx.translate(x, y); ctx.rotate(p.rot + 0.5 * Math.sin(ph + p.rot) * p.sp + 0.2 * u); ctx.scale(sc, sc);
+    ctx.drawImage(p.c, -48, -48); ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+
+  // camada 5: sombra de coqueiro balançando por cima de tudo
+  layer(3);
+  ctx.globalAlpha = 0.26;
+  ctx.save(); ctx.translate(1180, -90); ctx.rotate(2.25 + 0.06 * Math.sin(ph) + 0.02 * Math.sin(3 * ph)); ctx.drawImage(frond, -60, -300); ctx.restore();
+  ctx.save(); ctx.translate(-110, 1700); ctx.rotate(-0.42 + 0.05 * Math.sin(ph + 2.1)); ctx.scale(0.9, 0.9); ctx.drawImage(frond, -60, -300); ctx.restore();
+  ctx.globalAlpha = 1;
+
+  // luz do sol quente vinda do alto à esquerda + vinheta
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'soft-light';
+  const lg = ctx.createLinearGradient(0, 0, W, H);
+  lg.addColorStop(0, 'rgba(255,220,160,0.45)'); lg.addColorStop(0.55, 'rgba(255,240,210,0.08)'); lg.addColorStop(1, 'rgba(20,40,80,0.4)');
+  ctx.fillStyle = lg; ctx.fillRect(0, 0, W, H);
+  ctx.globalCompositeOperation = 'source-over';
+  const vg = ctx.createRadialGradient(W / 2, H * 0.48, H * 0.3, W / 2, H * 0.5, H * 0.72);
+  vg.addColorStop(0, 'rgba(10,8,4,0)'); vg.addColorStop(1, 'rgba(10,8,4,0.5)');
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,634 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lago em aquarela</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden}
+  canvas{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:block}
+</style>
+</head>
+<body>
+<canvas id="c" width="1080" height="1920"></canvas>
+<script>
+(() => {
+const W = 1080, H = 1920, T = 6000, TAU = Math.PI * 2;
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+function fit() {
+  const s = Math.min(innerWidth / W, innerHeight / H);
+  cv.style.width = (W * s) + 'px'; cv.style.height = (H * s) + 'px';
+}
+addEventListener('resize', fit); fit();
+
+/* ---------- aleatório com semente ---------- */
+let seed = 20261113;
+function rnd() {
+  seed = (seed + 0x6D2B79F5) | 0;
+  let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+function gauss() { let u = 0; while (!u) u = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * rnd()); }
+const R = (a, b) => a + (b - a) * rnd();
+
+/* ---------- ferramentas de aquarela ---------- */
+function mk(w, h) { const c = document.createElement('canvas'); c.width = Math.ceil(w); c.height = Math.ceil(h); return c; }
+function poly(cx, cy, r, n, ry, rot) {
+  ry = ry == null ? r : ry; rot = rot || 0; const p = [];
+  for (let i = 0; i < n; i++) {
+    const a = i / n * TAU, x = Math.cos(a) * r, y = Math.sin(a) * ry;
+    p.push([cx + x * Math.cos(rot) - y * Math.sin(rot), cy + x * Math.sin(rot) + y * Math.cos(rot)]);
+  }
+  return p;
+}
+function deform(pts, depth, v) {
+  let p = pts;
+  for (let d = 0; d < depth; d++) {
+    const o = [];
+    for (let i = 0; i < p.length; i++) {
+      const a = p[i], b = p[(i + 1) % p.length];
+      o.push(a);
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      o.push([(a[0] + b[0]) / 2 + gauss() * len * v, (a[1] + b[1]) / 2 + gauss() * len * v]);
+    }
+    p = o;
+  }
+  return p;
+}
+function addPath(c, p) { c.moveTo(p[0][0], p[0][1]); for (let i = 1; i < p.length; i++) c.lineTo(p[i][0], p[i][1]); c.closePath(); }
+function path(c, p) { c.beginPath(); addPath(c, p); }
+// camadas finas e irregulares sobrepostas = véu de tinta com borda que vaza
+function wash(c, pts, col, o) {
+  o = o || {};
+  const layers = o.layers || 16, al = o.alpha || 0.07, v = o.v == null ? 0.3 : o.v;
+  const base = deform(pts, o.d1 == null ? 2 : o.d1, v);
+  c.save();
+  c.fillStyle = col; c.globalCompositeOperation = o.blend || 'source-over';
+  for (let i = 0; i < layers; i++) {
+    const p = deform(base, o.d2 == null ? 2 : o.d2, v * 0.7);
+    c.globalAlpha = al; path(c, p); c.fill();
+    if (o.edge && i % 3 === 0) { c.globalAlpha = o.edge; c.strokeStyle = o.edgeCol || col; c.lineWidth = o.ew || 1.4; c.stroke(); }
+  }
+  c.restore();
+}
+// pinta numa folha à parte e aplica borrada (molhado no molhado)
+function soft(c, w, h, ox, oy, blur, blend, alpha, fn) {
+  const t = mk(w, h), x = t.getContext('2d'); x.translate(-ox, -oy); fn(x);
+  c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.filter = 'blur(' + blur + 'px)';
+  c.globalCompositeOperation = blend || 'source-over'; c.globalAlpha = alpha == null ? 1 : alpha;
+  c.drawImage(t, 0, 0); c.restore();
+}
+function stroke(c, pts, col, w, a) {
+  c.save(); c.strokeStyle = col; c.lineWidth = w; c.globalAlpha = a; c.lineCap = 'round'; c.lineJoin = 'round';
+  c.beginPath(); c.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < pts.length; i++) c.lineTo(pts[i][0], pts[i][1]); c.stroke(); c.restore();
+}
+function wobbleLine(x0, y0, x1, y1, n, amp) {
+  const p = []; const nx = -(y1 - y0), ny = x1 - x0, l = Math.hypot(nx, ny) || 1;
+  for (let i = 0; i <= n; i++) { const s = i / n, w = gauss() * amp * Math.sin(Math.PI * s); p.push([x0 + (x1 - x0) * s + nx / l * w, y0 + (y1 - y0) * s + ny / l * w]); }
+  return p;
+}
+
+/* =========================================================
+   CAMADA 0 — fundo do lago (água de igapó, reflexo da mata)
+   ========================================================= */
+const BX = -100, BY = -130, BW = 1280, BH = 2180;
+const bg = mk(BW, BH);
+(function paintBg() {
+  const b = bg.getContext('2d'); b.translate(-BX, -BY);
+  b.fillStyle = '#c7ddd2'; b.fillRect(BX, BY, BW, BH);
+  const g = b.createLinearGradient(0, BY, 0, BY + BH);
+  g.addColorStop(0, '#6f9a7c'); g.addColorStop(0.3, '#93b9a7'); g.addColorStop(0.65, '#8fb3b0'); g.addColorStop(1, '#7896b0');
+  b.globalCompositeOperation = 'multiply'; b.fillStyle = g; b.fillRect(BX, BY, BW, BH); b.globalCompositeOperation = 'source-over';
+  // véus molhados: chá de igapó, verde-seiva, índigo
+  soft(b, BW, BH, BX, BY, 26, 'multiply', 1, x => {
+    const cols = ['#d2ad7c', '#9fbd77', '#8ea0c4', '#6f9f98', '#c99d70', '#7f9cb8'];
+    for (let i = 0; i < 34; i++) {
+      const cx = R(BX, BX + BW), cy = R(BY, BY + BH), r = R(120, 340);
+      wash(x, poly(cx, cy, r, 10, r * R(0.5, 1), R(0, 3)), cols[i % cols.length], { layers: 7, alpha: 0.11, v: 0.35 });
+    }
+  });
+  // reflexo da mata no alto, em couve-flor
+  soft(b, BW, BH, BX, BY, 6, 'multiply', 0.9, x => {
+    for (let i = 0; i < 16; i++) {
+      const cx = BX + i * 85 + R(-30, 30), cy = R(-110, 120), r = R(90, 170);
+      wash(x, poly(cx, cy, r, 12, r * 0.8), i % 3 ? '#557d5c' : '#6b7d4c', { layers: 10, alpha: 0.09, v: 0.4, edge: 0.12, edgeCol: '#2f4d3a' });
+    }
+    for (let i = 0; i < 7; i++) {
+      const cy = R(300, 1700), cx = (i % 2 ? BX + 40 : BX + BW - 40);
+      wash(x, poly(cx, cy, R(90, 150), 12), '#62866a', { layers: 8, alpha: 0.08, v: 0.4 });
+    }
+  });
+  // raízes e galhos submersos
+  soft(b, BW, BH, BX, BY, 9, 'multiply', 0.55, x => {
+    for (let i = 0; i < 9; i++) {
+      const x0 = R(BX, BX + BW), y0 = R(BY, BY + BH), a = R(0, TAU), L = R(250, 600);
+      const p = wobbleLine(x0, y0, x0 + Math.cos(a) * L, y0 + Math.sin(a) * L, 12, 40);
+      stroke(x, p, '#4a6150', R(10, 22), 0.6);
+      const m = p[6]; stroke(x, wobbleLine(m[0], m[1], m[0] + R(-160, 160), m[1] + R(-160, 160), 6, 18), '#4a6150', 8, 0.5);
+    }
+  });
+  // véus de borda dura: a tinta secou e deixou a linha escura da poça
+  for (let i = 0; i < 14; i++) {
+    const cx = R(BX + 60, BX + BW - 60), cy = R(BY + 200, BY + BH - 60), r = R(110, 260);
+    wash(b, poly(cx, cy, r, 22, r * R(0.45, 0.9), R(0, 3)), ['#7fa69a', '#a4b88a', '#7d92b0', '#b49a78'][i % 4],
+      { layers: 6, alpha: 0.1, v: 0.16, d1: 2, d2: 3, blend: 'multiply', edge: 0.16, edgeCol: '#3f6266', ew: 1.6 });
+  }
+  // reflexos claros do céu (papel poupado)
+  soft(b, BW, BH, BX, BY, 22, 'screen', 0.55, x => {
+    for (let i = 0; i < 6; i++) {
+      const cx = R(0, W), cy = R(200, 1800);
+      wash(x, poly(cx, cy, R(220, 380), 10, R(40, 80), -0.35), '#f3f7ef', { layers: 6, alpha: 0.18, v: 0.3 });
+    }
+  });
+  // granulação do pigmento
+  for (let i = 0; i < 9000; i++) {
+    b.fillStyle = rnd() < 0.7 ? 'rgba(38,62,70,0.13)' : 'rgba(120,80,40,0.12)';
+    const s = R(0.8, 2.4); b.fillRect(R(BX, BX + BW), R(BY, BY + BH), s, s);
+  }
+})();
+
+/* =========================================================
+   PEIXES — acarás vistos de cima, pintados por camadas
+   ========================================================= */
+const UP = [[0.5, 0], [0.48, 0.05], [0.43, 0.095], [0.35, 0.135], [0.22, 0.165], [0.08, 0.172], [-0.06, 0.155], [-0.18, 0.115], [-0.29, 0.055]];
+function bodyPts(L) {
+  const p = UP.map(q => [q[0] * L, q[1] * L]);
+  for (let i = UP.length - 1; i > 0; i--) p.push([UP[i][0] * L, -UP[i][1] * L]);
+  return p;
+}
+const TAIL = (() => { const p = [[-0.24, 0.05]]; for (let i = 0; i <= 16; i++) { const a = Math.PI - 0.62 + i / 16 * 1.24, r = 0.3 - 0.025 * Math.cos((i / 16) * TAU); p.push([-0.27 + Math.cos(a) * r, Math.sin(a) * r * 0.95]); } p.push([-0.24, -0.05]); return p; })();
+const PEC = [[0.27, 0.13], [0.22, 0.25], [0.13, 0.31], [0.07, 0.28], [0.13, 0.17]];
+const PEL = [[0.08, 0.15], [0.02, 0.23], [-0.05, 0.22], [-0.02, 0.14]];
+const SPECIES = {
+  disco: { body: '#e8642e', back: '#b8302a', fin: '#f08a4a', finEdge: '#1f8fa3', edge: '#8a2a20', eye: '#d9452a' },
+  dourado: { body: '#f2c23c', back: '#d98a24', fin: '#f2a43a', finEdge: '#c0452a', edge: '#9a5a1a', eye: '#c43a2a' },
+  acu: { body: '#857c43', back: '#4f4a2a', fin: '#6e6a3c', finEdge: '#3c3a22', edge: '#3a3520', eye: '#e8892b' },
+  azul: { body: '#45aed0', back: '#245f86', fin: '#6fd0e6', finEdge: '#d9442e', edge: '#1d4a6a', eye: '#e8b23a' }
+};
+function makeFish(kind, L) {
+  const sp = SPECIES[kind];
+  const cw = Math.ceil(L * 1.22), ch = Math.ceil(L * 0.72);
+  const ox = cw * 0.53, oy = ch / 2;
+  const c = mk(cw, ch), x = c.getContext('2d');
+  x.translate(ox, oy);
+  const S = a => a.map(q => [q[0] * L, q[1] * L]);
+  const M = a => a.map(q => [q[0] * L, -q[1] * L]);
+  // nadadeiras translúcidas com raios
+  // pigmento do corpo vazando na água em volta (molhado no molhado)
+  soft(x, cw, ch, -ox, -oy, 7, 'source-over', 0.35, y => wash(y, bodyPts(L * 1.05), sp.body, { layers: 5, alpha: 0.2, v: 0.08 }));
+  const finWash = (pts, col, al) => wash(x, pts, col, { layers: 8, alpha: al || 0.065, v: 0.1, d1: 1, edge: 0.2, edgeCol: sp.finEdge });
+  for (const f of [S(PEC), M(PEC), S(PEL), M(PEL)]) finWash(f, sp.fin);
+  finWash(S(TAIL), sp.fin, 0.075);
+  finWash(S([[-0.25, 0.04], [-0.38, 0.09], [-0.4, 0], [-0.38, -0.09], [-0.25, -0.04]]), sp.body, 0.1);
+  for (let i = 0; i <= 12; i++) {
+    const a = Math.PI - 0.58 + i / 12 * 1.16, r = 0.29;
+    stroke(x, [[-0.27 * L, 0], [(-0.27 + Math.cos(a) * r * 0.5) * L, Math.sin(a) * r * 0.5 * L], [(-0.27 + Math.cos(a) * r) * L, Math.sin(a) * r * 0.95 * L]], sp.finEdge, 1.1, 0.45);
+  }
+  for (const s of [1, -1]) for (let i = 0; i < 6; i++) {
+    stroke(x, [[0.17 * L, s * 0.16 * L], [(0.21 - i * 0.025) * L, s * (0.25 + i * 0.01) * L]], sp.finEdge, 1, 0.35);
+  }
+  // corpo
+  const body = bodyPts(L);
+  wash(x, body, sp.body, { layers: 18, alpha: 0.16, v: 0.04, d1: 1 });
+  x.save(); path(x, deform(body, 1, 0.02)); x.clip();
+  // dorso mais escuro (glacis)
+  wash(x, [[0.42 * L, 0], [0.2 * L, 0.06 * L], [-0.1 * L, 0.05 * L], [-0.3 * L, 0.02 * L], [-0.3 * L, -0.02 * L], [-0.1 * L, -0.05 * L], [0.2 * L, -0.06 * L]], sp.back, { layers: 10, alpha: 0.1, v: 0.08, blend: 'multiply' });
+  if (kind === 'disco') {
+    for (let j = -3; j <= 3; j++) {
+      if (!j) continue;
+      const p = []; for (let i = 0; i <= 24; i++) { const u = 0.36 - i / 24 * 0.66; p.push([u * L, (j * 0.042 + 0.012 * Math.sin(u * 30 + j)) * L]); }
+      stroke(x, p, '#2aa3b2', L * 0.016, 0.7);
+    }
+  } else if (kind === 'acu') {
+    for (let i = 0; i < 11; i++) {
+      const cx = R(-0.25, 0.35) * L, cy = R(-0.14, 0.14) * L;
+      wash(x, poly(cx, cy, R(0.03, 0.06) * L, 8, R(0.02, 0.04) * L, R(0, 3)), '#f0862c', { layers: 7, alpha: 0.16, v: 0.25, edge: 0.2, edgeCol: '#b85a1a' });
+    }
+  } else if (kind === 'dourado') {
+    for (let i = 0; i < 26; i++) {
+      const u = R(-0.25, 0.36), w = 0.15 * Math.sqrt(Math.max(0, 1 - Math.pow((u - 0.05) / 0.45, 2)));
+      wash(x, poly(u * L, R(-w, w) * L, R(0.008, 0.015) * L, 7), '#2b56a6', { layers: 5, alpha: 0.22, v: 0.2 });
+    }
+  } else if (kind === 'azul') {
+    for (let i = 0; i < 6; i++) {
+      const u = 0.28 - i * 0.1;
+      wash(x, poly(u * L, 0, 0.022 * L, 10, 0.2 * L), '#1f4e78', { layers: 7, alpha: 0.12, v: 0.15, blend: 'multiply' });
+    }
+  }
+  // luz poupada: papel aparecendo de um lado da cabeça
+  wash(x, poly(0.22 * L, -0.09 * L, 0.16 * L, 10, 0.035 * L, -0.12), '#fff8e8', { layers: 6, alpha: 0.12, v: 0.2 });
+  x.restore();
+  // borda escura onde a tinta secou
+  path(x, deform(body, 2, 0.015)); x.strokeStyle = sp.edge; x.globalAlpha = 0.45; x.lineWidth = 1.6; x.stroke(); x.globalAlpha = 1;
+  // espinha dorsal: crista de raios
+  const dorsal = []; for (let i = 0; i <= 14; i++) { const u = 0.3 - i / 14 * 0.6; dorsal.push([u * L, gauss() * 0.6]); }
+  stroke(x, dorsal, sp.back, L * 0.022, 0.45);
+  for (let i = 0; i < 16; i++) { const u = 0.28 - i * 0.036; stroke(x, [[u * L, -4], [(u - 0.03) * L, 0], [u * L, 4]], sp.edge, 1, 0.35); }
+  // olhos
+  for (const s of [1, -1]) {
+    const ex = 0.39 * L, ey = s * 0.09 * L;
+    x.fillStyle = '#f7efdc'; x.beginPath(); x.arc(ex, ey, 0.026 * L, 0, TAU); x.fill();
+    x.fillStyle = sp.eye; x.globalAlpha = 0.85; x.beginPath(); x.arc(ex + 1, ey, 0.019 * L, 0, TAU); x.fill();
+    x.fillStyle = '#1b1a22'; x.globalAlpha = 0.9; x.beginPath(); x.arc(ex + 1.5, ey, 0.011 * L, 0, TAU); x.fill(); x.globalAlpha = 1;
+  }
+  if (kind === 'acu') { // ocelo no pedúnculo
+    x.fillStyle = '#f08a2a'; x.globalAlpha = 0.85; x.beginPath(); x.arc(-0.27 * L, 0, 0.035 * L, 0, TAU); x.fill();
+    x.fillStyle = '#1e1c16'; x.beginPath(); x.arc(-0.27 * L, 0, 0.018 * L, 0, TAU); x.fill(); x.globalAlpha = 1;
+  }
+  // versão funda (desfocada e tingida de água) e sombra
+  const deep = mk(cw, ch), d = deep.getContext('2d');
+  d.filter = 'blur(2.5px)'; d.drawImage(c, 0, 0); d.filter = 'none';
+  d.globalCompositeOperation = 'source-atop'; d.fillStyle = '#5f8f8a'; d.globalAlpha = 0.35; d.fillRect(0, 0, cw, ch);
+  const sh = mk(cw + 40, ch + 40), s2 = sh.getContext('2d');
+  const sil = mk(cw, ch), s1 = sil.getContext('2d'); s1.drawImage(c, 0, 0); s1.globalCompositeOperation = 'source-in'; s1.fillStyle = '#1d3a40'; s1.fillRect(0, 0, cw, ch);
+  s2.filter = 'blur(9px)'; s2.drawImage(sil, 20, 20);
+  return { c, deep, sh, cw, ch, ox, oy, L };
+}
+
+/* =========================================================
+   VITÓRIAS-RÉGIAS, flor e pétalas
+   ========================================================= */
+function makePad(Rr) {
+  const S = Math.ceil(Rr * 2 + 50), c = mk(S, S), x = c.getContext('2d'), C = S / 2;
+  const notch = R(0, TAU), w1 = R(0, TAU), w2 = R(0, TAU);
+  const outline = (r, n) => {
+    n = n || 90; const p = [];
+    for (let i = 0; i < n; i++) {
+      const a = i / n * TAU; let dd = Math.abs(((a - notch + Math.PI * 3) % TAU) - Math.PI);
+      const k = Math.max(0, 1 - dd / 0.07), q = (1 - 0.42 * k) * (1 + 0.012 * Math.sin(3 * a + w1) + 0.007 * Math.sin(7 * a + w2));
+      p.push([C + Math.cos(a) * r * q, C + Math.sin(a) * r * q]);
+    }
+    return p;
+  };
+  // parede da borda: o avesso vermelho aparece
+  wash(x, outline(Rr), '#9c3a46', { layers: 12, alpha: 0.15, v: 0.07, d1: 1, d2: 2, edge: 0.3, edgeCol: '#5e1b29', ew: 2 });
+  // folha
+  const leafCol = ['#b4cb5e', '#a9c55a', '#bccb60', '#9fc06a'][Math.floor(rnd() * 4)];
+  wash(x, outline(Rr * 0.93), leafCol, { layers: 16, alpha: 0.17, v: 0.06, d1: 1, d2: 2 });
+  x.save(); path(x, outline(Rr * 0.93)); x.clip();
+  // poças de pigmento com borda dura e retorno de água (couve-flor)
+  for (let i = 0; i < 5; i++) {
+    const a = R(0, TAU), r = R(0.1, 0.65) * Rr, cx = C + Math.cos(a) * r, cy = C + Math.sin(a) * r, rr = R(0.12, 0.26) * Rr;
+    wash(x, poly(cx, cy, rr, 9, rr * R(0.6, 1), R(0, 3)), i % 2 ? '#86a84a' : '#9a9a4c', { layers: 5, alpha: 0.1, v: 0.35, blend: 'multiply', edge: 0.28, edgeCol: '#5f7a32', ew: 1.6 });
+  }
+  if (rnd() < 0.6) { const a = R(0, TAU), r = R(0.4, 0.7) * Rr; wash(x, poly(C + Math.cos(a) * r, C + Math.sin(a) * r, Rr * 0.2, 10), '#b0603a', { layers: 6, alpha: 0.08, v: 0.4, blend: 'multiply' }); }
+  for (let i = 0; i < 2; i++) {
+    const a = R(0, TAU), r = R(0.2, 0.6) * Rr, cx = C + Math.cos(a) * r, cy = C + Math.sin(a) * r;
+    wash(x, poly(cx, cy, R(0.08, 0.14) * Rr, 12), '#e6edb0', { layers: 5, alpha: 0.2, v: 0.4, edge: 0.3, edgeCol: '#6f8f3a', ew: 1.4 });
+  }
+  for (let i = 0; i < Rr * 6; i++) { const a = R(0, TAU), r = Math.sqrt(rnd()) * Rr; x.fillStyle = 'rgba(60,80,30,0.18)'; const s = R(0.8, 2); x.fillRect(C + Math.cos(a) * r, C + Math.sin(a) * r, s, s); }
+  // sombra do lado oposto à luz
+  const g = x.createRadialGradient(C - Rr * 0.35, C - Rr * 0.4, Rr * 0.1, C, C, Rr * 1.05);
+  g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(1, 'rgba(70,110,60,0.55)');
+  x.globalCompositeOperation = 'multiply'; x.fillStyle = g; x.fillRect(0, 0, S, S); x.globalCompositeOperation = 'source-over';
+  soft(x, S, S, 0, 0, 8, 'multiply', 0.8, y => {
+    for (let i = 0; i < 7; i++) { const a = R(0, TAU), r = R(0.1, 0.7) * Rr; wash(y, poly(C + Math.cos(a) * r, C + Math.sin(a) * r, R(0.15, 0.3) * Rr, 9), i % 2 ? '#7ea548' : '#a8a050', { layers: 6, alpha: 0.12, v: 0.35 }); }
+  });
+  // nervuras radiais e células acolchoadas
+  const nv = 20, rings = [0.28, 0.46, 0.62, 0.76, 0.88];
+  const ang = []; for (let i = 0; i < nv; i++) ang.push(i / nv * TAU + R(-0.05, 0.05));
+  for (const a of ang) stroke(x, wobbleLine(C, C, C + Math.cos(a) * Rr * 0.92, C + Math.sin(a) * Rr * 0.92, 10, 1.8), '#4f7d34', R(1.6, 2.6), 0.45);
+  for (const rr of rings) for (let i = 0; i < nv; i++) {
+    const a0 = ang[i], a1 = ang[(i + 1) % nv] + (i === nv - 1 ? TAU : 0), am = (a0 + a1) / 2, r = rr * Rr;
+    x.save(); x.strokeStyle = '#557f36'; x.globalAlpha = 0.22; x.lineWidth = 1.3; x.beginPath();
+    x.moveTo(C + Math.cos(a0) * r, C + Math.sin(a0) * r);
+    x.quadraticCurveTo(C + Math.cos(am) * r * 0.93, C + Math.sin(am) * r * 0.93, C + Math.cos(a1) * r, C + Math.sin(a1) * r); x.stroke(); x.restore();
+  }
+  x.restore();
+  // parede interna da borda: luz de um lado, sombra do outro
+  x.save(); x.lineWidth = Rr * 0.07;
+  const rg = x.createLinearGradient(C - Rr, C - Rr, C + Rr, C + Rr);
+  rg.addColorStop(0, 'rgba(232,236,170,0.85)'); rg.addColorStop(0.5, 'rgba(160,190,90,0.35)'); rg.addColorStop(1, 'rgba(80,100,40,0.7)');
+  x.strokeStyle = rg; path(x, outline(Rr * 0.955)); x.stroke(); x.restore();
+  path(x, deform(outline(Rr), 1, 0.006)); x.strokeStyle = '#6a1f2c'; x.globalAlpha = 0.55; x.lineWidth = 2.2; x.stroke(); x.globalAlpha = 1;
+  // gotas d'água na folha
+  for (let i = 0; i < 4; i++) {
+    const a = R(0, TAU), r = R(0.15, 0.7) * Rr, px = C + Math.cos(a) * r, py = C + Math.sin(a) * r, s = R(4, 9);
+    x.fillStyle = 'rgba(60,90,50,0.35)'; x.beginPath(); x.arc(px + 2, py + 2, s, 0, TAU); x.fill();
+    x.fillStyle = 'rgba(245,250,235,0.85)'; x.beginPath(); x.arc(px, py, s * 0.8, 0, TAU); x.fill();
+  }
+  return { c, S };
+}
+function makeFlower(r, pink) {
+  const S = Math.ceil(r * 2.4), c = mk(S, S), x = c.getContext('2d'), C = S / 2;
+  // sépalas vinho
+  for (let i = 0; i < 4; i++) { const a = i / 4 * TAU + 0.4; wash(x, poly(C + Math.cos(a) * r * 0.62, C + Math.sin(a) * r * 0.62, r * 0.5, 10, r * 0.16, a), '#8a3048', { layers: 8, alpha: 0.14, v: 0.08 }); }
+  const outer = pink ? '#f3b7cc' : '#fbf7ee';
+  for (let k = 0; k < 2; k++) for (let i = 0; i < 14; i++) {
+    const a = i / 14 * TAU + k * 0.22, len = r * (k ? 0.8 : 0.95);
+    const p = poly(C + Math.cos(a) * len * 0.52, C + Math.sin(a) * len * 0.52, len * 0.5, 14, r * 0.13, a);
+    wash(x, p, outer, { layers: 7, alpha: 0.3, v: 0.03, d1: 1, d2: 1, edge: 0.18, edgeCol: pink ? '#b8507a' : '#a99bb8' });
+    wash(x, poly(C + Math.cos(a) * len * 0.3, C + Math.sin(a) * len * 0.3, len * 0.25, 10, r * 0.08, a), pink ? '#d86d98' : '#cdc3dc', { layers: 4, alpha: 0.12, v: 0.1, blend: 'multiply' });
+  }
+  for (let i = 0; i < 12; i++) {
+    const a = i / 12 * TAU + 0.13, len = r * 0.55;
+    wash(x, poly(C + Math.cos(a) * len * 0.5, C + Math.sin(a) * len * 0.5, len * 0.5, 12, r * 0.09, a), pink ? '#c2386e' : '#e985ad', { layers: 6, alpha: 0.24, v: 0.04, edge: 0.2, edgeCol: '#9a2a55' });
+  }
+  wash(x, poly(C, C, r * 0.2, 14), '#efd06a', { layers: 8, alpha: 0.25, v: 0.15, edge: 0.3, edgeCol: '#b88a2a' });
+  for (let i = 0; i < 26; i++) { const a = R(0, TAU), rr = R(0, r * 0.17); x.fillStyle = 'rgba(190,120,40,0.6)'; x.beginPath(); x.arc(C + Math.cos(a) * rr, C + Math.sin(a) * rr, R(1.2, 2.6), 0, TAU); x.fill(); }
+  return { c, S };
+}
+function makePetal(col, edge, w, h) {
+  const c = mk(w * 2 + 20, h * 2 + 20), x = c.getContext('2d');
+  wash(x, poly(c.width / 2, c.height / 2, w, 12, h), col, { layers: 7, alpha: 0.25, v: 0.06, edge: 0.3, edgeCol: edge });
+  return c;
+}
+
+/* ---------- ondinhas: anel de tinta e mancha que floresce ---------- */
+const RING_R = 240;
+function makeRing(col, w, layers, al, edge) {
+  const S = 600, c = mk(S, S), x = c.getContext('2d'), C = S / 2;
+  for (let i = 0; i < layers; i++) {
+    const ww = w * R(0.6, 1.4);
+    const o = deform(poly(C, C, RING_R + ww / 2, 30), 3, 0.09), n = deform(poly(C, C, RING_R - ww / 2, 30), 3, 0.09);
+    x.globalAlpha = al; x.fillStyle = col; x.beginPath(); addPath(x, o); addPath(x, n); x.fill('evenodd');
+    if (edge && i % 2 === 0) { x.globalAlpha = edge; x.strokeStyle = col; x.lineWidth = 1.6; x.beginPath(); addPath(x, o); x.stroke(); }
+  }
+  // pincel que falha: o anel engrossa e some ao redor
+  x.globalAlpha = 1; x.globalCompositeOperation = 'destination-out';
+  const g = x.createConicGradient(R(0, TAU), C, C);
+  for (let i = 0; i <= 12; i++) g.addColorStop(i / 12, 'rgba(0,0,0,' + (i % 12 === 0 ? 0.1 : R(0, 0.75)).toFixed(2) + ')');
+  x.fillStyle = g; x.fillRect(0, 0, S, S);
+  const out = mk(S, S), y = out.getContext('2d'); y.filter = 'blur(1.6px)'; y.drawImage(c, 0, 0);
+  return out;
+}
+function makeBloom() {
+  const S = 420, c = mk(S, S), x = c.getContext('2d'), C = S / 2;
+  wash(x, poly(C, C, 160, 16), '#2d5f78', { layers: 14, alpha: 0.07, v: 0.22, edge: 0.18, edgeCol: '#1c3f58', ew: 2 });
+  // retorno de água: centro clareia, borda fica em couve-flor
+  x.globalCompositeOperation = 'destination-out';
+  const g = x.createRadialGradient(C, C, 10, C, C, 150); g.addColorStop(0, 'rgba(0,0,0,0.8)'); g.addColorStop(0.75, 'rgba(0,0,0,0.45)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+  x.fillStyle = g; x.fillRect(0, 0, S, S);
+  return c;
+}
+
+/* ---------- primeiro plano: folha de bananeira-brava e palha de açaí ---------- */
+function makeLeaf(L, Wd) {
+  const cw = L + 60, ch = Wd + 60, c = mk(cw, ch), x = c.getContext('2d'), cy = ch / 2;
+  const top = [], bot = [];
+  for (let i = 0; i <= 40; i++) { const s = i / 40, hw = Wd / 2 * Math.pow(Math.sin(Math.PI * Math.min(1, s * 1.05)), 0.75) * (1 - 0.25 * s); top.push([30 + s * L, cy - hw]); bot.push([30 + s * L, cy + hw * 0.9]); }
+  const blade = top.concat(bot.reverse());
+  wash(x, blade, '#3f7048', { layers: 14, alpha: 0.13, v: 0.006, d1: 1, d2: 1, edge: 0.2, edgeCol: '#1f3d2b', ew: 2 });
+  x.save(); path(x, blade); x.clip();
+  wash(x, [[30, cy], [30 + L, cy], [30 + L, cy + Wd], [30, cy + Wd]], '#2b5038', { layers: 6, alpha: 0.12, v: 0.02, blend: 'multiply' });
+  for (let i = 1; i < 34; i++) { const s = i / 34, px = 30 + s * L; stroke(x, [[px, cy], [px + 70, cy - Wd * 0.6]], '#264a33', 1.6, 0.35); stroke(x, [[px, cy], [px + 70, cy + Wd * 0.6]], '#264a33', 1.6, 0.3); }
+  x.globalCompositeOperation = 'destination-out';
+  for (const s of [0.3, 0.52, 0.71]) { stroke(x, [[30 + s * L + 60, cy - Wd], [30 + s * L + 8, cy - 8]], '#000', 3, 1); }
+  x.restore();
+  stroke(x, [[30, cy], [30 + L * 0.98, cy - 2]], '#c3d79a', 5, 0.7);
+  const out = mk(cw, ch), o = out.getContext('2d'); o.filter = 'blur(3px)'; o.drawImage(c, 0, 0);
+  return { c: out, cw, ch, ax: 30, ay: cy };
+}
+function makeFrond(L) {
+  const cw = L + 120, ch = 620, c = mk(cw, ch), x = c.getContext('2d'), cy = ch * 0.35;
+  const rach = s => [40 + s * L, cy + 90 * s * s];
+  const rp = []; for (let i = 0; i <= 30; i++) rp.push(rach(i / 30));
+  for (let i = 2; i < 34; i++) {
+    const s = i / 34, p = rach(s), len = 260 * (1 - s * 0.55);
+    for (const sd of [-1, 1]) {
+      const a = 0.85 * sd + 0.25, ex = p[0] + Math.cos(a) * len * 0.6 + 40, ey = p[1] + Math.sin(a) * len + 30;
+      const mx = (p[0] + ex) / 2 + 30, my = (p[1] + ey) / 2;
+      const leaflet = [[p[0], p[1]], [mx + 6, my - 4], [ex, ey], [mx - 6, my + 5]];
+      wash(x, leaflet, sd > 0 ? '#2f5e3e' : '#3c6d47', { layers: 5, alpha: 0.2, v: 0.04, d1: 1, d2: 1 });
+    }
+  }
+  stroke(x, rp, '#5b6e3a', 7, 0.8);
+  const out = mk(cw, ch), o = out.getContext('2d'); o.filter = 'blur(3px)'; o.drawImage(c, 0, 0);
+  return { c: out, cw, ch, ax: 40, ay: cy };
+}
+function shadowOf(img, blur) {
+  const s = mk(img.width + 60, img.height + 60), x = s.getContext('2d');
+  const t = mk(img.width, img.height), y = t.getContext('2d'); y.drawImage(img, 0, 0); y.globalCompositeOperation = 'source-in'; y.fillStyle = '#183238'; y.fillRect(0, 0, t.width, t.height);
+  x.filter = 'blur(' + blur + 'px)'; x.drawImage(t, 30, 30); return s;
+}
+function makeSky() {
+  const c = mk(700, 260), x = c.getContext('2d');
+  wash(x, poly(350, 130, 280, 12, 60), '#f6f8f0', { layers: 8, alpha: 0.2, v: 0.25 });
+  const o = mk(700, 260), y = o.getContext('2d'); y.filter = 'blur(14px)'; y.drawImage(c, 0, 0); return o;
+}
+
+/* ---------- papel: textura, margem rasgada, respingos ---------- */
+function makePaper() {
+  const tex = mk(W, H), x = tex.getContext('2d');
+  const id = x.createImageData(W, H), d = id.data;
+  for (let i = 0; i < d.length; i += 4) { const v = 255 - Math.pow(rnd(), 2.2) * 34; d[i] = v; d[i + 1] = v - 1; d[i + 2] = v - 5; d[i + 3] = 255; }
+  x.putImageData(id, 0, 0);
+  const sm = mk(W / 6, H / 6), y = sm.getContext('2d'), id2 = y.createImageData(sm.width, sm.height), e = id2.data;
+  for (let i = 0; i < e.length; i += 4) { const v = 255 - Math.pow(rnd(), 1.6) * 26; e[i] = v; e[i + 1] = v; e[i + 2] = v - 3; e[i + 3] = 255; }
+  y.putImageData(id2, 0, 0);
+  x.globalCompositeOperation = 'multiply'; x.imageSmoothingEnabled = true; x.drawImage(sm, 0, 0, W, H);
+  // fibras
+  x.globalCompositeOperation = 'source-over';
+  for (let i = 0; i < 500; i++) { const px = R(0, W), py = R(0, H), a = R(0, TAU), l = R(6, 22); x.strokeStyle = 'rgba(150,140,120,0.12)'; x.lineWidth = 0.8; x.beginPath(); x.moveTo(px, py); x.quadraticCurveTo(px + Math.cos(a) * l * 0.5 + R(-4, 4), py + Math.sin(a) * l * 0.5 + R(-4, 4), px + Math.cos(a) * l, py + Math.sin(a) * l); x.stroke(); }
+  // margem de papel com borda irregular onde a tinta acumulou
+  const frame = mk(W, H), f = frame.getContext('2d');
+  const m = 34, edge = [];
+  const side = (x0, y0, x1, y1) => { const n = Math.round(Math.hypot(x1 - x0, y1 - y0) / 14); for (let i = 0; i < n; i++) { const s = i / n, w = Math.sin(s * 7 + x0 * 0.01) * 4 + gauss() * 2.4; const nx = -(y1 - y0), ny = x1 - x0, l = Math.hypot(nx, ny); edge.push([x0 + (x1 - x0) * s + nx / l * w, y0 + (y1 - y0) * s + ny / l * w]); } };
+  side(m, m + 6, W - m - 4, m); side(W - m, m + 2, W - m + 3, H - m - 6); side(W - m - 6, H - m, m + 5, H - m + 2); side(m, H - m - 3, m - 2, m + 8);
+  f.save(); path(f, edge); f.strokeStyle = 'rgba(28,60,70,0.55)'; f.lineWidth = 5; f.filter = 'blur(1.4px)'; f.stroke(); f.restore();
+  f.save(); path(f, edge); f.strokeStyle = 'rgba(28,60,70,0.25)'; f.lineWidth = 16; f.filter = 'blur(6px)'; f.stroke(); f.restore();
+  f.beginPath(); f.rect(0, 0, W, H); addPath(f, edge); f.fillStyle = '#f5f0e4'; f.fill('evenodd');
+  // respingos
+  const spl = ['#2b8f9e', '#e8692f', '#5f8f3a', '#c2386e', '#2c5c74'];
+  for (let k = 0; k < 5; k++) {
+    const cx = [80, W - 90, 120, W - 140, W / 2][k], cy = [140, 1780, 1650, 260, H - 50][k], col = spl[k];
+    for (let i = 0; i < 16; i++) { const a = R(0, TAU), r = Math.pow(rnd(), 1.5) * 110; f.globalAlpha = R(0.35, 0.75); f.fillStyle = col; f.beginPath(); f.arc(cx + Math.cos(a) * r, cy + Math.sin(a) * r, R(0.8, 4.5) * (1 - r / 140), 0, TAU); f.fill(); }
+  }
+  f.globalAlpha = 1;
+  return { tex, frame };
+}
+
+/* =========================================================
+   MONTAGEM DA CENA
+   ========================================================= */
+const fishArt = { disco: makeFish('disco', 280), dourado: makeFish('dourado', 258), acu: makeFish('acu', 330), azul: makeFish('azul', 266) };
+const LANES = [
+  { kind: 'acu', deep: true, k: 2, A: [1380, 520], B: [-340, 1620], amp: 120, waves: 1.0, ph: 0.6, rip: [] },
+  { kind: 'disco', deep: false, k: 3, A: [1320, 2230], B: [-260, -280], amp: 110, waves: 1.5, ph: 0, rip: [0.36, 0.63] },
+  { kind: 'dourado', deep: false, k: 2, A: [-280, 760], B: [1360, 1320], amp: 90, waves: 1.2, ph: 1.1, rip: [0.42, 0.72] },
+  { kind: 'azul', deep: false, k: 3, A: [360, -300], B: [780, 2240], amp: 150, waves: 1.6, ph: 2.0, rip: [0.3, 0.56, 0.8] }
+];
+function laneP(l, s) {
+  const dx = l.B[0] - l.A[0], dy = l.B[1] - l.A[1], len = Math.hypot(dx, dy), nx = -dy / len, ny = dx / len;
+  const w = l.amp * Math.sin(TAU * l.waves * s + l.ph);
+  return [l.A[0] + dx * s + nx * w, l.A[1] + dy * s + ny * w];
+}
+for (const l of LANES) l.m = Math.round(5.4 * l.k) / l.k; // batidas de cauda que fecham o loop
+
+const PADS = [
+  { x: 150, y: 320, r: 215 }, { x: 935, y: 640, r: 225 }, { x: 575, y: 40, r: 150 },
+  { x: 270, y: 1150, r: 190 }, { x: 995, y: 1460, r: 210 }, { x: 165, y: 1795, r: 210 },
+  { x: 720, y: 1915, r: 175 }, { x: 650, y: 870, r: 92 }, { x: 990, y: 1050, r: 80 }
+].map((p, i) => Object.assign(p, makePad(p.r), { ph: i * 1.7, ph2: i * 2.3 }));
+const FLOWERS = [
+  Object.assign({ x: 505, y: 985, ph: 0.4 }, makeFlower(96, false)),
+  Object.assign({ x: 735, y: 330, ph: 2.1 }, makeFlower(70, true))
+];
+const PETALS = [
+  { c: makePetal('#f6c2d4', '#c25a84', 16, 7), x: 610, y: 1220, ax: 50, ay: 35, ph: 0.3 },
+  { c: makePetal('#fbf6ec', '#a99bb8', 18, 7), x: 430, y: 760, ax: 40, ay: 30, ph: 2.2 },
+  { c: makePetal('#f3b0c8', '#b8507a', 14, 6), x: 820, y: 1700, ax: 45, ay: 30, ph: 4.0 },
+  { c: makePetal('#d98a3a', '#7a4a1a', 26, 11), x: 520, y: 1580, ax: 60, ay: 25, ph: 1.4 },
+  { c: makePetal('#c7a24a', '#6d5420', 22, 9), x: 860, y: 280, ax: 35, ay: 40, ph: 3.3 }
+];
+const shadowDisc = (() => { const c = mk(300, 300), x = c.getContext('2d'); x.filter = 'blur(16px)'; x.fillStyle = '#1b3640'; x.beginPath(); x.arc(150, 150, 110, 0, TAU); x.fill(); return c; })();
+const ringDark = makeRing('#22476a', 26, 12, 0.11, 0.16);
+const ringLight = makeRing('#f2f7ee', 12, 9, 0.14, 0);
+const bloom = makeBloom();
+const sky = makeSky();
+const leaf = makeLeaf(780, 250), leafSh = shadowOf(leaf.c, 12);
+const frond = makeFrond(820), frondSh = shadowOf(frond.c, 12);
+const FG = [
+  { a: leaf, sh: leafSh, x: 1190, y: -70, rot: 2.25, ph: 0.5, sx: 1, sy: 1 },
+  { a: frond, sh: frondSh, x: -150, y: 2010, rot: -0.75, ph: 2.6, sx: 1, sy: 1 }
+];
+const SKY = [{ x: 330, y: 720, ph: 0 }, { x: 760, y: 1260, ph: 2 }, { x: 420, y: 1640, ph: 4 }];
+
+// eventos de ondinha: onde o acará beija a superfície, e pingos da folha
+const EVENTS = [];
+for (const l of LANES) for (const s of l.rip) { const p = laneP(l, s); EVENTS.push({ x: p[0], y: p[1], t: ((s * l.k) % 1) * T, size: R(0.75, 1) }); }
+EVENTS.push({ x: 735, y: 470, t: 900, size: 0.7 }, { x: 760, y: 500, t: 3950, size: 0.6 }, { x: 560, y: 1460, t: 2300, size: 0.9 }, { x: 420, y: 600, t: 4700, size: 0.8 }, { x: 160, y: 1450, t: 1500, size: 0.7 });
+const LIFE = 3700;
+
+const SPARK = [];
+while (SPARK.length < 36) {
+  const x = R(60, W - 60), y = R(60, H - 60);
+  if (PADS.some(p => Math.hypot(p.x - x, p.y - y) < p.r + 10)) continue;
+  SPARK.push({ x, y, ph: rnd(), n: 1 + Math.floor(rnd() * 3), l: R(5, 14), a: R(-0.3, 0.3) });
+}
+const paper = makePaper();
+const tmp = mk(400, 320), tctx = tmp.getContext('2d');
+
+/* =========================================================
+   QUADRO
+   ========================================================= */
+let cam = { x: 0, y: 0, r: 0 };
+function layer(f) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.translate(W / 2, H / 2); ctx.rotate(cam.r * f); ctx.scale(1 + cam.z * f, 1 + cam.z * f);
+  ctx.translate(-W / 2 - cam.x * f, -H / 2 - cam.y * f);
+}
+function fishList(t) {
+  const out = [];
+  for (const l of LANES) for (let i = 0; i < l.k; i++) {
+    const u = i + t / T, s = (u / l.k) % 1;
+    const p = laneP(l, s), q = laneP(l, s + 0.002);
+    out.push({ l, p, ang: Math.atan2(q[1] - p[1], q[0] - p[0]), ph: TAU * l.m * u + l.ph });
+  }
+  return out;
+}
+function drawFish(f, img) {
+  const a = fishArt[f.l.kind], src = img || a.c, L = a.L, amp = 0.06 * L, pad = Math.ceil(amp * 1.5);
+  if (tmp.width < a.cw || tmp.height < a.ch + pad * 2) { tmp.width = a.cw; tmp.height = a.ch + pad * 2; }
+  tctx.clearRect(0, 0, tmp.width, tmp.height);
+  for (let sx = 0; sx < a.cw; sx += 3) {
+    const lx = sx - a.ox, u = Math.min(1, Math.max(0, (0.5 * L - lx) / (1.07 * L)));
+    const off = amp * (u * u * Math.sin(f.ph - u * 3.1)) + amp * 0.12 * Math.sin(f.ph - 1.3);
+    tctx.drawImage(src, sx, 0, 3, a.ch, sx, pad + off, 3, a.ch);
+  }
+  ctx.save(); ctx.translate(f.p[0], f.p[1]); ctx.rotate(f.ang);
+  ctx.drawImage(tmp, 0, 0, a.cw, a.ch + pad * 2, -a.ox, -a.oy - pad, a.cw, a.ch + pad * 2);
+  ctx.restore();
+}
+function draw(ts) {
+  const t = ((ts % T) + T) % T, a = t / T * TAU;
+  cam = { x: 46 * Math.sin(a), y: 72 * Math.sin(a + 1.3), r: 0.009 * Math.sin(a + 0.6), z: 0.012 * Math.sin(a + 2.2) };
+
+  // 0 — fundo
+  layer(0.3); ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  ctx.drawImage(bg, BX, BY);
+  const fish = fishList(t);
+
+  // 1 — sombras dos peixes no fundo
+  layer(0.45); ctx.globalCompositeOperation = 'multiply';
+  for (const f of fish) {
+    const s = fishArt[f.l.kind].sh, A = fishArt[f.l.kind];
+    ctx.globalAlpha = f.l.deep ? 0.22 : 0.32;
+    const d = f.l.deep ? 18 : 40;
+    ctx.save(); ctx.translate(f.p[0] + d, f.p[1] + d * 1.4); ctx.rotate(f.ang); ctx.drawImage(s, -A.ox - 20, -A.oy - 20); ctx.restore();
+  }
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+
+  // 2 — acarás fundos
+  layer(0.6); ctx.globalAlpha = 0.72;
+  for (const f of fish) if (f.l.deep) drawFish(f, fishArt[f.l.kind].deep);
+  ctx.globalAlpha = 1;
+
+  // 3 — acarás rasos
+  layer(0.8); ctx.globalAlpha = 0.96;
+  for (const f of fish) if (!f.l.deep) drawFish(f);
+  ctx.globalAlpha = 1;
+
+  // 4 — superfície: reflexos, ondinhas, vitórias-régias, flores
+  layer(1);
+  ctx.globalCompositeOperation = 'screen';
+  for (const s of SKY) { ctx.globalAlpha = 0.42 + 0.12 * Math.sin(a + s.ph); ctx.save(); ctx.translate(s.x + 30 * Math.sin(a + s.ph), s.y + 18 * Math.cos(a + s.ph)); ctx.rotate(-0.35); ctx.drawImage(sky, -350, -130); ctx.restore(); }
+  ctx.globalAlpha = 1;
+  for (const e of EVENTS) {
+    const age = ((t - e.t) % T + T) % T; if (age > LIFE) continue;
+    const k = age / LIFE, fin = Math.min(1, age / 220), fade = fin * Math.pow(1 - k, 1.4);
+    const ease = 1 - Math.pow(1 - k, 2.4), r1 = (26 + 300 * ease) * e.size;
+    ctx.globalCompositeOperation = 'multiply';
+    const bs = (0.25 + 0.75 * (1 - Math.pow(1 - k, 3))) * e.size * 1.1;
+    ctx.globalAlpha = fade * 0.55; ctx.drawImage(bloom, e.x - 210 * bs, e.y - 210 * bs, 420 * bs, 420 * bs);
+    for (const [rr, al] of [[r1, 1], [r1 * 0.58, 0.7]]) {
+      const sc = rr / RING_R; ctx.globalAlpha = fade * al;
+      ctx.drawImage(ringDark, e.x - 300 * sc, e.y - 300 * sc, 600 * sc, 600 * sc);
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    for (const [rr, al] of [[r1 * 0.95, 0.55], [r1 * 0.6, 0.4]]) {
+      const sc = rr / RING_R; ctx.globalAlpha = fade * al;
+      ctx.drawImage(ringLight, e.x - 300 * sc, e.y - 300 * sc, 600 * sc, 600 * sc);
+    }
+  }
+  // sombras das folhas grandes e das vitórias-régias
+  ctx.globalCompositeOperation = 'multiply';
+  for (const p of PADS) { const s = p.r / 110 * 1.05; ctx.globalAlpha = 0.38; ctx.drawImage(shadowDisc, p.x + 22 - 150 * s, p.y + 34 - 150 * s, 300 * s, 300 * s); }
+  for (const g of FG) {
+    ctx.globalAlpha = 0.28; ctx.save(); ctx.translate(g.x + 120, g.y + 170); ctx.rotate(g.rot + 0.03 * Math.sin(a + g.ph));
+    ctx.drawImage(g.sh, -g.a.ax - 30, -g.a.ay - 30); ctx.restore();
+  }
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  for (const p of PADS) {
+    ctx.save(); ctx.translate(p.x + 5 * Math.sin(a + p.ph), p.y + 4 * Math.cos(a + p.ph)); ctx.rotate(0.012 * Math.sin(a + p.ph2));
+    ctx.drawImage(p.c, -p.S / 2, -p.S / 2); ctx.restore();
+  }
+  for (const fl of FLOWERS) {
+    ctx.save(); ctx.translate(fl.x + 6 * Math.sin(a + fl.ph), fl.y + 5 * Math.cos(a + fl.ph)); ctx.rotate(0.05 * Math.sin(a + fl.ph));
+    const s = 1 + 0.015 * Math.sin(2 * a + fl.ph); ctx.scale(s, s);
+    ctx.drawImage(fl.c, -fl.S / 2, -fl.S / 2); ctx.restore();
+  }
+  for (const pt of PETALS) {
+    ctx.save(); ctx.translate(pt.x + pt.ax * Math.sin(a + pt.ph), pt.y + pt.ay * Math.sin(2 * a + pt.ph)); ctx.rotate(pt.ph + 0.6 * Math.sin(a + pt.ph));
+    ctx.drawImage(pt.c, -pt.c.width / 2, -pt.c.height / 2); ctx.restore();
+  }
+  // brilhos: papel poupado que pisca na água
+  ctx.fillStyle = '#fbf8ef';
+  for (const s of SPARK) {
+    const v = Math.max(0, Math.sin(TAU * (s.n * t / T + s.ph))); const al = Math.pow(v, 6) * 0.9; if (al < 0.02) continue;
+    ctx.globalAlpha = al; ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(s.a); ctx.beginPath(); ctx.ellipse(0, 0, s.l, 2.2, 0, 0, TAU); ctx.fill(); ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+
+  // 5 — primeiro plano desfocado
+  layer(1.7);
+  for (const g of FG) {
+    ctx.globalAlpha = 0.9; ctx.save(); ctx.translate(g.x, g.y); ctx.rotate(g.rot + 0.03 * Math.sin(a + g.ph));
+    ctx.drawImage(g.a.c, -g.a.ax, -g.a.ay); ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+
+  // papel por cima de tudo (fixo: a tinta anda, o papel fica)
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(paper.frame, 0, 0);
+  ctx.globalCompositeOperation = 'multiply'; ctx.globalAlpha = 0.85; ctx.drawImage(paper.tex, 0, 0);
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+}
+function loop(ts) { draw(ts); requestAnimationFrame(loop); }
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

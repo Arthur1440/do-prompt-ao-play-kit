@@ -1,0 +1,72 @@
+Crie o reel "[TÍTULO]" no mais alto nível profissional possível, usando os arquivos da pasta <pasta_reels>/todo/[tema]. [MODO: "Este reel copia o FORMATO de um reel que funcionou" (molde) OU "Este reel usa a MESMA NARRAÇÃO de um reel que funcionou, só com o pedido final trocado; a imagem é toda nossa" (fiel)]: [REFERÊNCIA: @conta, assunto, views e multiplicador], cuja ficha está em [CAMINHO DO analise.md]. Leia a ficha antes de começar: ela diz como o gancho prende, como a imagem segue a fala e qual é o ritmo. [O QUE SE COPIA E O QUE É NOSSO]. Objetivo: prender no 1º segundo, segurar até o fim porque cada frase traz uma cena nova, [O EFEITO DO FECHO] e levar a comentar PLAY no fim.
+
+FERRAMENTAS (obrigatório)
+- Use as skills remotion-best-practices (Remotion: composição, legendas, render) e threejs (cena 3D), além das threejs-* que precisar (loaders, animation, lighting, materials, postprocessing). Leia o SKILL.md delas antes de escrever código.
+- Se alguma não estiver instalada, instale antes de começar e confira o SKILL.md depois:
+  npx skills add remotion-dev/skills
+  npx -y skills add cloudai-x/threejs-skills --agent claude-code
+  npx -y skills add secondsky/claude-skills --skill threejs --agent claude-code   (só se a skill "threejs" geral faltar)
+- MODELOS 3D PRONTOS, SEMPRE. Personagens, bichos, casas, móveis, rua, árvores e objetos vêm de fonte pronta, nesta ordem: Poly Pizza (https://poly.pizza; busca em /search/<termo>, licença no JSON da página, GLB em https://static.poly.pizza/<uuid>.glb), Quaternius (animais e pessoas animados), Kenney (kits de cidade e casa), Sketchfab (filtro CC0/CC BY). Só CC0 ou CC BY, com autor, link e licença no CREDITOS.txt. Modele em código só o que não existir pronto, e mesmo aí prefira adaptar ou repintar uma peça pronta. Cada modelo passa por um teste de 2 minutos antes de entrar nos planos: escala medida já animado, para onde é a frente, rosto, pose de repouso. Não monte "projeto-base" próprio.
+
+ARQUIVOS
+- Narração (voz clonada no ElevenLabs): narracao.mp3, na raiz da pasta (cerca de [DURAÇÃO] s). Use a narração que eu enviar: corte só silêncios longos e erros de leitura. Não existe meta de palavras por minuto nem de velocidade; nunca pare a produção pedindo voz nova. Se o arquivo ainda não estiver na pasta, me avise e espere; não gere voz.
+- Imagens: não há imagens fornecidas; gere tudo em 3D e motion graphics com os modelos prontos. Se eu colocar arquivos em assets\, use-os conforme o LEIA-ME.txt.
+- Roteiro de apoio: ROTEIRO_[tema].md (texto previsto, bloco a bloco, MAPA DE PLANOS e fontes), NARRACAO_ELEVENLABS.md (texto enviado ao ElevenLabs) e tempos.json (tempo de cada frase e de cada plano; [ESTIMADO ou REAL]).
+- Referência visual: os quadros da referência em [PASTA DA REFERÊNCIA]/folha_*.jpg mostram o ritmo e a linguagem (não copie o personagem, o cenário nem o desenho dela).
+- Salve tudo o que gerar em: <pasta_reels>/todo/[tema]/saida/
+- Quando eu aprovar o vídeo final, mova a pasta inteira de <pasta_reels>/todo/[tema] para <pasta_reels>/done/[tema] (antes, tire qualquer junção de node_modules de dentro dela).
+
+FORMATO
+MP4 1080x1920 (Instagram Reels), 30fps, duração = duração da narração já editada. Transcreva a narração com tempo por palavra e sincronize cada plano e cada legenda com a fala. Se a fala gravada diferir do roteiro, legenda e cenas seguem o áudio. "IA" e [PALAVRA DO COMENTÁRIO, do perfil] sempre em maiúsculas.
+
+REGRAS DO FORMATO (vêm da referência; valem para as 3 direções)
+1. A IMAGEM SEGUE A FALA. [REGRA DE CORTE DA REFERÊNCIA: um plano por verbo / por frase / por bloco, N planos, plano médio X s]. Siga o MAPA DE PLANOS do roteiro, ajustado aos tempos da transcrição.
+2. QUADRO 0 COM AÇÃO: [O QUE ESTÁ NA TELA NO QUADRO 0]. Nada de título parado ou cartão. O primeiro meio segundo já se mexe.
+3. [REGRAS DE LINGUAGEM DA REFERÊNCIA: personagem fixo, câmera, grafismos 2D, selos de capítulo, números como objetos, o único plano diferente...]
+4. LEGENDA: [ESTILO DA LEGENDA DA REFERÊNCIA]. Some quando a tela já escreve a mesma coisa.
+5. O PERSONAGEM É NOSSO: [DESCRIÇÃO DO PERSONAGEM PRÓPRIO, a partir de um modelo pronto], diferente do da referência ([O QUE NÃO COPIAR]).
+6. FECHO: [COMO O FECHO DA REFERÊNCIA SE TRADUZ NA IMAGEM]; depois vem a virada para IA (comum às três direções).
+
+SOM (a narração é a prioridade: nada pode atrapalhar a fala)
+- Edite a narração antes de animar: remova silêncios longos e eventuais erros de leitura, mas mantenha uma pausa curta antes de "Esse vídeo foi feito com IA" (a virada) e depois do fim da virada. Não mexa no timbre nem na velocidade da voz.
+- Níveis do mix final: -14 LUFS integrado e pico de -1 dBTP, com a voz sozinha em torno de -15 LUFS. Enquanto houver fala, o que estiver por baixo fica pelo menos 18 LU abaixo da voz, medido em janelas de 1 s.
+- [TRILHA: conforme a referência e a escolha do operador; se houver, muito baixa, com ducking por sidechain na voz (redução de 10 a 12 dB, ataque ~50 ms, soltura ~400 ms) e corte de 4 a 6 dB entre 1 e 4 kHz durante a fala. Se a escolha foi "só a voz", escreva: sem trilha e sem efeitos.]
+- [EFEITOS SONOROS, conforme a escolha do operador. SIM: "Efeitos poucos e com motivo, cada um ligado a uma ação na tela: (lista do tema). Durante a fala, só efeitos curtos e baixos (pelo menos 20 dB abaixo do pico da voz), nos intervalos entre palavras, nunca em cima de palavra-chave." NÃO: "Sem efeitos sonoros."]
+- Silêncio total de música e efeitos em "Esse vídeo foi feito com IA".
+- Fontes de som (se houver trilha ou efeitos): Openverse (https://api.openverse.org/v1/audio/), só licenças CC0 ou CC BY (parâmetro license=cc0,by, sem o parâmetro category). Se a API falhar, use sons já licenciados de projetos anteriores ou gere por código, e me avise.
+
+REGRAS DE CONTEÚDO
+- Reconstituição ilustrativa genérica: sem marca, sem placa legível, sem rosto ou nome de pessoa real.
+- Os fatos na tela seguem a seção "Fontes e força de cada afirmação" do roteiro. [FATOS QUE A IMAGEM NÃO PODE CONTRADIZER].
+- [CUIDADOS DO TEMA]
+- Imagens, modelos 3D, sons e músicas baixados de fora: apenas domínio público, CC0 ou CC BY.
+
+ENTREGA (na pasta saida/)
+1. PRÉVIA, para minha análise, numa entrega só: 3 DIREÇÕES VISUAIS DIFERENTES. Antes de produzir, leia a skill catalogo-estilos (~/.claude/skills/catalogo-estilos) e siga a ficha de cada direção: receita, checklist "como reconhecer", erros conhecidos e quadros de referência. Monte cada direção com material, luz e pós próprios (trocar só o material deixa o estilo irreconhecível). Os modelos prontos são os mesmos nas 3; o que muda é o tratamento.
+   [BLOCO A: estilo, receita adaptada ao tema, quadro de referência do catálogo, motivo em uma linha se a skill escolheu]
+   [BLOCO B: idem]
+   [BLOCO C: idem, ou "Livre: escolha você o terceiro estilo..." se o operador escolheu o padrão do perfil]
+   Para CADA direção entregue:
+   - 4 quadros: [QUADRO 1: o quadro 0], [QUADRO 2], [QUADRO 3], [QUADRO 4: o plano mais forte da história]; mais um quadro da virada para IA, comum às três;
+   - OS PRIMEIROS 10 SEGUNDOS ANIMADOS COM A VOZ REAL, pegando o gancho inteiro: previa_A_10s.mp4, previa_B_10s.mp4, previa_C_10s.mp4, uma direção por processo. Os 10 s cobrem: [O QUE A FALA DIZ DE 0 A 10 S E OS PLANOS DESSE TRECHO, do tempos.json];
+   - a saída do medidor da skill catalogo-estilos nos 10 s (scripts/medir_reel.py com --previa; só informa, não trava), ao lado da prévia.
+   Mostre as 3 prévias lado a lado e PARE: eu escolho a direção vendo os quadros e os 10 s. Mesmo que algo pareça óbvio, não produza o reel inteiro antes da minha escolha.
+2. Depois do meu ok, só na direção escolhida: reel_[tema].mp4, capa_[tema].jpg (1080x1920, [CENA DA CAPA], texto de capa "[TEXTO DA CAPA EM MAIÚSCULAS]"), CREDITOS.txt (cada modelo 3D, som e música com autor, link e licença) e a saída do medidor no MP4 final (informativa).
+
+CONFERÊNCIA ANTES DE ENTREGAR
+- Quadro 0 com ação, sem título parado.
+- Frase por frase contra a transcrição: cada plano no tempo da palavra; nenhum trecho fica mais de ~5 s sem corte ou mudança de enquadramento.
+- O personagem é o mesmo do começo ao fim e não se parece com o da referência.
+- Todo modelo 3D do vídeo está no CREDITOS.txt com licença CC0 ou CC BY.
+- Teste de clareza da voz: transcreva o áudio final mixado e compare com a transcrição da narração limpa; se alguma palavra sumir ou mudar, baixe o que estiver por baixo naquele trecho. Informe LUFS, voz sozinha e fundo sob a fala (pior janela de 1 s).
+- Nenhum texto cortado ou fora da área segura do Reels (nada importante nos 250 px de cima nem nos 400 px de baixo).
+
+ROTEIRO VISUAL (sugestão com os tempos do tempos.json; as regras acima mandam)
+[1. 0,0-x s "fala": plano(s) do mapa]
+[2. ...]
+[N. fecho]
+[N+1. Virada do perfil (em "Esse vídeo foi feito com IA"): a música para, a cena congela e vira arame na cor de destaque do perfil ([COR_DESTAQUE]) e partículas sobre azul-tinta (#0B1026).]
+[N+2. Fim da virada ("até a minha voz" ou "do roteiro à voz"): uma onda sonora acende na cor de destaque e vira o contorno de um rosto feito de linhas.]
+[N+3. Fecho do perfil ("[FECHO DO PERFIL]"): o dedo toca "Seguir" no perfil [@PERFIL]; o campo de comentário digita "[PALAVRA]"; [O QUE A PESSOA RECEBE] se escreve com um botão na cor de destaque. Sem pedido de comentário no perfil: só o "Seguir". Sem virada no perfil: apague N+1 a N+3 e termine no fecho da referência.]
+
+Observação final: [UMA LINHA SOBRE O NÍVEL VISUAL ESPERADO]; preciso do vídeo o mais bonito possível.

@@ -1,0 +1,656 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Boto de papel</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden}
+  canvas{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:block}
+</style>
+</head>
+<body>
+<canvas id="c" width="1080" height="1920"></canvas>
+<script>
+const W = 1080, H = 1920, T = 6000, TAU = Math.PI * 2;
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d', { willReadFrequently: true });
+function fit() {
+  const s = Math.min(innerWidth / W, innerHeight / H);
+  cv.style.width = (W * s) + 'px';
+  cv.style.height = (H * s) + 'px';
+}
+addEventListener('resize', fit); fit();
+
+/* ---------- utilidades ---------- */
+function rng(seed) {
+  return function () {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function hash(n) { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
+const frac = x => x - Math.floor(x);
+
+/* ---------- textura de papel (fibras) ---------- */
+const TS = 384;
+const tex = document.createElement('canvas'); tex.width = tex.height = TS;
+(function () {
+  const g = tex.getContext('2d');
+  const id = g.createImageData(TS, TS); const r = rng(11);
+  for (let i = 0; i < id.data.length; i += 4) {
+    const v = 255 - Math.floor(r() * r() * 46);
+    id.data[i] = v; id.data[i + 1] = v - 1; id.data[i + 2] = v - 4; id.data[i + 3] = 255;
+  }
+  g.putImageData(id, 0, 0);
+  for (let i = 0; i < 340; i++) {
+    const dark = r() < 0.6;
+    g.strokeStyle = dark ? `rgba(96,82,60,${0.05 + r() * 0.09})` : `rgba(255,255,255,${0.25 + r() * 0.3})`;
+    g.lineWidth = 0.5 + r() * 1.3;
+    let x = r() * TS, y = r() * TS, a = r() * TAU;
+    for (let ox = -TS; ox <= TS; ox += TS) for (let oy = -TS; oy <= TS; oy += TS) {
+      let xx = x, yy = y, aa = a; const rr = rng(i * 31 + 5);
+      g.beginPath(); g.moveTo(xx + ox, yy + oy);
+      for (let k = 0; k < 5; k++) { aa += (rr() - 0.5) * 1.1; xx += Math.cos(aa) * 7; yy += Math.sin(aa) * 7; g.lineTo(xx + ox, yy + oy); }
+      g.stroke();
+    }
+  }
+})();
+const pat = ctx.createPattern(tex, 'repeat');
+
+function paper(path, ox, oy, a) {
+  ctx.save();
+  ctx.globalCompositeOperation = 'multiply';
+  ctx.globalAlpha = a;
+  pat.setTransform(new DOMMatrix([1, 0, 0, 1, ox, oy]));
+  ctx.fillStyle = pat;
+  ctx.fill(path);
+  ctx.restore();
+}
+function cut(path, color, sh, ox, oy, ta) {
+  ctx.save();
+  if (sh) {
+    ctx.shadowColor = `rgba(8,28,24,${sh.a})`;
+    ctx.shadowBlur = sh.b; ctx.shadowOffsetX = sh.x; ctx.shadowOffsetY = sh.y;
+  }
+  ctx.fillStyle = color;
+  ctx.fill(path);
+  ctx.restore();
+  paper(path, ox || 0, oy || 0, ta == null ? 0.55 : ta);
+}
+function poly(path, pts, X) {
+  const f = X || (v => v);
+  path.moveTo(f(pts[0][0]), pts[0][1]);
+  for (let i = 1; i < pts.length; i++) path.lineTo(f(pts[i][0]), pts[i][1]);
+  path.closePath();
+}
+function smoothClosed(path, pts) {
+  const n = pts.length;
+  const m = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  let s = m(pts[n - 1], pts[0]);
+  path.moveTo(s[0], s[1]);
+  for (let i = 0; i < n; i++) {
+    const p = pts[i], q = m(pts[i], pts[(i + 1) % n]);
+    path.quadraticCurveTo(p[0], p[1], q[0], q[1]);
+  }
+  path.closePath();
+}
+
+/* ---------- câmera ---------- */
+function cam(d, t) {
+  const a = TAU * t / T;
+  const cx = 22 * Math.sin(a), cy = 14 * Math.sin(2 * a + 0.7), r = 0.012 * Math.sin(a + 1.3);
+  ctx.translate(W / 2 + cx * d, H / 2 + cy * d);
+  ctx.rotate(r * d);
+  ctx.translate(-W / 2, -H / 2);
+}
+
+/* ---------- geometria das decorações (coordenadas do lado esquerdo) ---------- */
+function leafPts(x, y, ang, len, wid) {
+  const L = [], R = [], ca = Math.cos(ang), sa = Math.sin(ang);
+  const n = 12;
+  for (let i = 0; i <= n; i++) {
+    const s = i / n;
+    const w = wid * Math.pow(Math.sin(Math.PI * Math.min(1, s * 1.05)), 0.85) * (1 - 0.25 * s);
+    const ax = s * len;
+    L.push([x + ax * ca - w * sa, y + ax * sa + w * ca]);
+    R.push([x + ax * ca + w * sa, y + ax * sa - w * ca]);
+  }
+  return L.concat(R.reverse());
+}
+function veinPts(x, y, ang, len, wid) {
+  const ca = Math.cos(ang), sa = Math.sin(ang), out = [];
+  out.push([[x + len * 0.08 * ca, y + len * 0.08 * sa], [x + len * 0.9 * ca, y + len * 0.9 * sa]]);
+  for (let k = 1; k <= 3; k++) {
+    const s = k / 4.2, bx = x + len * s * ca, by = y + len * s * sa;
+    for (const sg of [1, -1]) {
+      const e = len * 0.16, w = wid * 0.55 * sg;
+      out.push([[bx, by], [bx + e * ca - w * sa, by + e * sa + w * ca]]);
+    }
+  }
+  return out;
+}
+function bladePts(x, y, ang, len, wid, bend) {
+  const n = 14, C = [];
+  let px = x, py = y, a = ang;
+  for (let i = 0; i <= n; i++) {
+    C.push([px, py, a]);
+    a += bend / n; px += Math.cos(a) * len / n; py += Math.sin(a) * len / n;
+  }
+  const L = [], R = [];
+  for (let i = 0; i <= n; i++) {
+    const s = i / n, w = wid * Math.pow(1 - s, 0.9) + 0.8;
+    const [cx, cy, ca] = C[i];
+    L.push([cx - Math.sin(ca) * w, cy + Math.cos(ca) * w]);
+    R.push([cx + Math.sin(ca) * w, cy - Math.cos(ca) * w]);
+  }
+  return L.concat(R.reverse());
+}
+
+/* ---------- camadas de rio (longe -> perto) ---------- */
+const STEP = 12;
+const DEFS = [
+  { base: 330, P: 720,  col: '#a8d5bd', edge: 'rgba(255,255,240,0.35)', sh: { a: .16, b: 10, x: 3, y: 5 },  depth: .2,  kind: 0 },
+  { base: 255, P: 960,  col: '#78b7a0', edge: 'rgba(255,255,235,0.30)', sh: { a: .22, b: 14, x: 4, y: 8 },  depth: .4,  kind: 1 },
+  { base: 190, P: 1320, col: '#4a8f7c', edge: 'rgba(255,250,225,0.26)', sh: { a: .28, b: 18, x: 6, y: 10 }, depth: .65, kind: 2 },
+  { base: 130, P: 1920, col: '#2b6a5b', edge: 'rgba(255,245,215,0.22)', sh: { a: .34, b: 24, x: 8, y: 14 }, depth: 1.0, kind: 3 },
+  { base: 62,  P: 2520, col: '#16413a', edge: 'rgba(255,240,205,0.18)', sh: { a: .42, b: 30, x: 10, y: 18 }, depth: 1.35, kind: 4 },
+];
+const LAYERS = DEFS.map((d, li) => {
+  const sides = [0, 1].map(side => {
+    const r = rng(100 + li * 17 + side * 7);
+    const harm = [];
+    const ms = [1, 2, 3, 5, 7];
+    const amps = [0.32, 0.2, 0.13, 0.07, 0.04];
+    for (let k = 0; k < ms.length; k++) harm.push({ m: ms[k] * Math.max(1, Math.round(d.P / 1100)), a: d.base * amps[k] * (0.7 + r() * 0.6) + 8, p: r() * TAU });
+    const seedKey = li * 1000 + side * 500;
+    const f = u => {
+      const uu = ((u % d.P) + d.P) % d.P;
+      let x = d.base;
+      for (const h of harm) x += h.a * Math.sin(TAU * h.m * uu / d.P + h.p);
+      x += (hash(seedKey + Math.round(uu / STEP)) - 0.5) * 6;
+      return x;
+    };
+    // decorações
+    const decos = [];
+    const cnt = [5, 7, 7, 10, 11][li];
+    for (let i = 0; i < cnt; i++) {
+      decos.push({
+        u: (i + 0.15 + r() * 0.7) / cnt * d.P,
+        a: r(), b: r(), c: r(), e: r(), k: r() < 0.5 ? 1 : 2, ph: r() * TAU,
+      });
+    }
+    return { f, decos };
+  });
+  return Object.assign({}, d, { sides, li });
+});
+
+function decoShapes(L, D, x, y, t, groups, side) {
+  const sw = Math.sin(TAU * D.k * t / T + D.ph);
+  const add = (col, pts) => { (groups[col] = groups[col] || []).push(pts); };
+  const vein = (col, segs) => { (groups['V' + col] = groups['V' + col] || []).push(...segs); };
+  switch (L.kind) {
+    case 0: { // folhas ao longe, mesma família de cor
+      const ang = -0.6 + D.a * 1.2 + 0.05 * sw;
+      add('#93c4ab', leafPts(x - 12, y, ang, 70 + D.b * 60, 20 + D.c * 10));
+      add('#bfe1cc', leafPts(x - 12, y + 30, ang + 0.7, 50 + D.c * 40, 14));
+      break;
+    }
+    case 1: { // folhas e plantinhas
+      const ang = -0.9 + D.a * 1.5 + 0.07 * sw;
+      add('#5f9f88', leafPts(x - 15, y, ang, 90 + D.b * 70, 26 + D.c * 10));
+      if (D.e < 0.6) add('#8cc5a6', bladePts(x - 10, y + 20, -0.4 - D.c * 0.6, 160 + D.b * 120, 9, 0.6 + 0.12 * sw));
+      break;
+    }
+    case 2: { // raízes da várzea + folhas
+      if (D.e < 0.55) {
+        const a0 = 0.15 + D.a * 0.5;
+        add('#7a5638', bladePts(x - 30, y, a0, 200 + D.b * 140, 16, 0.9 + 0.05 * sw));
+        add('#6a4a31', bladePts(x - 30, y + 40, a0 + 0.5, 120 + D.c * 80, 10, -0.6 + 0.05 * sw));
+      } else {
+        const ang = -0.7 + D.a * 1.3 + 0.08 * sw;
+        add('#3c806b', leafPts(x - 15, y, ang, 120 + D.b * 60, 34 + D.c * 10));
+        vein('#2f6a58', veinPts(x - 15, y, ang, 120 + D.b * 60, 34 + D.c * 10));
+      }
+      break;
+    }
+    case 3: { // folhas grandes verdes + capim
+      if (D.e < 0.55) {
+        const ang = -0.75 + D.a * 1.1 + 0.1 * sw;
+        const len = 170 + D.b * 90, wid = 52 + D.c * 18;
+        const col = D.c < 0.5 ? '#5a9e52' : '#77b25a';
+        add(col, leafPts(x - 20, y, ang, len, wid));
+        vein('#3b7a3c', veinPts(x - 20, y, ang, len, wid));
+      } else {
+        add('#3f8a52', bladePts(x - 20, y, -0.7 - D.a * 0.5, 220 + D.b * 120, 15, 0.7 + 0.16 * sw));
+        add('#4f9a58', bladePts(x - 20, y + 30, 0.35 + D.c * 0.4, 160 + D.b * 90, 12, 0.5 + 0.14 * sw));
+      }
+      break;
+    }
+    case 4: { // primeiro plano: capim escuro e folhas
+      if (D.e < 0.65) {
+        add('#245a45', bladePts(x - 25, y, -0.85 - D.a * 0.4, 280 + D.b * 160, 20, 0.6 + 0.2 * sw));
+        add('#2e6e4c', bladePts(x - 25, y + 50, 0.45 + D.c * 0.4, 200 + D.b * 100, 15, 0.4 + 0.18 * sw));
+      } else {
+        const ang = -0.5 + D.a * 0.9 + 0.1 * sw;
+        const len = 200 + D.b * 80, wid = 62;
+        add('#3c7e45', leafPts(x - 25, y, ang, len, wid));
+        vein('#24572c', veinPts(x - 25, y, ang, len, wid));
+      }
+      break;
+    }
+  }
+}
+
+function drawLayer(L, t) {
+  const off = (t / T) * L.P;
+  ctx.save();
+  cam(L.depth, t);
+  for (let side = 0; side < 2; side++) {
+    const S = L.sides[side];
+    const X = side ? (v => W - v) : (v => v);
+    const edge = [];
+    const u0 = Math.floor((-300 - off) / STEP) * STEP;
+    for (let u = u0; u + off <= H + 300; u += STEP) edge.push([S.f(u), u + off]);
+    // decorações (atrás do recorte da margem? não: na frente, presas na borda)
+    const groups = {};
+    for (const D of S.decos) {
+      for (let k = -1; k * L.P < H + 600; k++) {
+        const y = D.u + off + k * L.P - L.P;
+        if (y < -500 || y > H + 500) continue;
+        decoShapes(L, D, S.f(D.u), y, t, groups, side);
+      }
+    }
+    // corpo da margem
+    const p = new Path2D();
+    p.moveTo(X(-320), edge[0][1]);
+    for (const [x, y] of edge) p.lineTo(X(x), y);
+    p.lineTo(X(-320), edge[edge.length - 1][1]);
+    p.closePath();
+    // decorações de fundo (raízes ficam atrás da margem)
+    const back = [], front = [];
+    for (const col in groups) (col[0] === 'V' ? front : (col === '#7a5638' || col === '#6a4a31' ? back : front)).push(col);
+    for (const col of back) {
+      const gp = new Path2D(); for (const pts of groups[col]) poly(gp, pts, X);
+      cut(gp, col, L.sh, 0, off, 0.5);
+    }
+    cut(p, L.col, L.sh, 0, off, 0.6);
+    const ep = new Path2D();
+    ep.moveTo(X(edge[0][0]), edge[0][1]);
+    for (const [x, y] of edge) ep.lineTo(X(x), y);
+    ctx.strokeStyle = L.edge; ctx.lineWidth = 2.5; ctx.stroke(ep);
+    for (const col of front) {
+      if (col[0] === 'V') {
+        const vp = new Path2D();
+        for (const [a, b] of groups[col]) { vp.moveTo(X(a[0]), a[1]); vp.lineTo(X(b[0]), b[1]); }
+        ctx.strokeStyle = col.slice(1); ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.stroke(vp);
+        continue;
+      }
+      const gp = new Path2D(); for (const pts of groups[col]) poly(gp, pts, X);
+      cut(gp, col, L.sh, 0, off, 0.5);
+    }
+  }
+  ctx.restore();
+}
+
+/* ---------- fundo, sol e raios ---------- */
+function background(t) {
+  ctx.save();
+  cam(0.1, t);
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#f4e7b6');
+  g.addColorStop(0.22, '#d6e8c3');
+  g.addColorStop(0.6, '#8fc6b0');
+  g.addColorStop(1, '#3f8d80');
+  ctx.fillStyle = g;
+  ctx.fillRect(-100, -100, W + 200, H + 200);
+  const all = new Path2D(); all.rect(-100, -100, W + 200, H + 200);
+  paper(all, 0, 0, 0.5);
+  // sol de papel em anéis
+  const a = TAU * t / T;
+  const rings = [[300, '#f8eccb'], [228, '#f6e2a8'], [160, '#f3d486'], [100, '#f1c463'], [52, '#f6d98a']];
+  rings.forEach(([r, c], i) => {
+    const p = new Path2D();
+    const rr = r + 7 * Math.sin(a + i * 0.9);
+    const pts = [];
+    for (let k = 0; k < 64; k++) {
+      const th = k / 64 * TAU;
+      const wob = rr + (hash(i * 100 + k) - 0.5) * 4;
+      pts.push([540 + Math.cos(th) * wob, 120 + Math.sin(th) * wob]);
+    }
+    poly(p, pts);
+    cut(p, c, { a: .12, b: 10, x: 2, y: 4 }, 0, 0, 0.45);
+  });
+  ctx.restore();
+}
+function shafts(t) {
+  ctx.save();
+  cam(0.3, t);
+  const a = TAU * t / T;
+  for (let i = 0; i < 5; i++) {
+    const ang = (i - 2) * 0.17 + 0.04 * Math.sin(a + i * 1.3);
+    const ox = 540 + (i - 2) * 70, oy = 60;
+    const len = 2100, w0 = 30 + 10 * (i % 2), w1 = 150 + 50 * ((i + 1) % 3);
+    const dx = Math.sin(ang), dy = Math.cos(ang), nx = dy, ny = -dx;
+    const p = new Path2D();
+    poly(p, [[ox + nx * w0, oy + ny * w0], [ox - nx * w0, oy - ny * w0],
+      [ox + dx * len - nx * w1, oy + dy * len - ny * w1], [ox + dx * len + nx * w1, oy + dy * len + ny * w1]]);
+    const g = ctx.createLinearGradient(0, 0, 0, H * 0.9);
+    const al = 0.13 + 0.04 * Math.sin(2 * a + i);
+    g.addColorStop(0, `rgba(255,247,215,${al})`);
+    g.addColorStop(1, 'rgba(255,247,215,0)');
+    ctx.fillStyle = g;
+    ctx.fill(p);
+  }
+  ctx.restore();
+}
+
+/* ---------- peixinhos de papel ---------- */
+function fish(t) {
+  ctx.save();
+  cam(0.5, t);
+  const schools = [
+    { dir: 1, ph: 0.0, y0: 560, col: '#e8873a', fin: '#c8642a' },
+    { dir: -1, ph: 0.5, y0: 1180, col: '#f0b545', fin: '#d38f2c' },
+  ];
+  const offs = [[0, 0], [-70, 40], [-60, -46], [-140, 10], [-135, 80], [-150, -60]];
+  for (const S of schools) {
+    const f = frac(t / T + S.ph);
+    const bx = S.dir > 0 ? -260 + f * 1640 : 1340 - f * 1640;
+    const by = S.y0 + f * 300;
+    const body = new Path2D(), fins = new Path2D();
+    const eyes = [];
+    offs.forEach(([dx, dy], j) => {
+      const x = bx + dx * S.dir, y = by + dy + 8 * Math.sin(TAU * 2 * t / T + j);
+      const wag = 0.35 * Math.sin(TAU * 14 * t / T + j * 1.7);
+      const s = 0.85 + 0.25 * hash(j + 3);
+      const pts = [];
+      for (let k = 0; k < 18; k++) {
+        const th = k / 18 * TAU;
+        pts.push([x + Math.cos(th) * 34 * s * S.dir, y + Math.sin(th) * 15 * s * (1 + 0.25 * Math.cos(th))]);
+      }
+      poly(body, pts);
+      const tx = x - 30 * s * S.dir, ty = y;
+      const ca = Math.cos(wag), sa = Math.sin(wag);
+      const tp = (u, v) => [tx + (u * ca - v * sa) * S.dir, ty + (u * sa + v * ca)];
+      poly(fins, [tp(4, 0), tp(-28, -18), tp(-20, 0), tp(-28, 18)]);
+      eyes.push([x + 18 * s * S.dir, y - 3]);
+    });
+    cut(fins, S.fin, { a: .2, b: 8, x: 3, y: 5 }, 0, 0, 0.4);
+    cut(body, S.col, { a: .22, b: 10, x: 3, y: 6 }, 0, 0, 0.45);
+    ctx.fillStyle = '#fbf3df';
+    for (const [x, y] of eyes) { ctx.beginPath(); ctx.arc(x, y, 4.5, 0, TAU); ctx.fill(); }
+  }
+  ctx.restore();
+}
+
+/* ---------- partículas (sementes e pedacinhos de folha) ---------- */
+const SPECKS = Array.from({ length: 26 }, (_, i) => ({
+  x: 60 + hash(i * 3 + 1) * 960, y: hash(i * 7 + 2) * 2160, s: 6 + hash(i * 5 + 9) * 10,
+  r: hash(i + 40) * TAU, k: hash(i + 70) < 0.5 ? 1 : -1,
+  c: ['#f3e2b0', '#cfe3a8', '#e7c47a', '#b9d9b0'][i % 4],
+}));
+function specks(t) {
+  ctx.save();
+  cam(0.85, t);
+  const off = (t / T) * 2160;
+  const groups = {};
+  for (const S of SPECKS) {
+    const y = ((S.y + off) % 2160) - 120;
+    const x = S.x + 14 * Math.sin(TAU * t / T + S.r);
+    const a = S.r + S.k * TAU * t / T;
+    const pts = leafPts(x, y, a, S.s * 2, S.s * 0.6);
+    (groups[S.c] = groups[S.c] || new Path2D());
+    poly(groups[S.c], pts);
+  }
+  for (const c in groups) cut(groups[c], c, { a: .2, b: 6, x: 2, y: 4 }, 0, 0, 0.3);
+  ctx.restore();
+}
+
+/* ---------- o boto ---------- */
+const BL = 660, NS = 90;
+const DORS = [[0, 5], [.05, 9], [.16, 13], [.2, 42], [.245, 84], [.285, 94], [.33, 90], [.44, 128], [.6, 94], [.72, 58], [.84, 26], [.93, 14], [1, 11]];
+const VENT = [[0, 5], [.05, 10], [.16, 15], [.21, 34], [.27, 64], [.34, 92], [.46, 120], [.6, 86], [.72, 50], [.84, 24], [.93, 13], [1, 11]];
+function prof(tab, s) {
+  const n = tab.length;
+  const m = i => {
+    const a = tab[Math.max(0, i - 1)], c = tab[Math.min(n - 1, i + 1)];
+    return (c[1] - a[1]) / (c[0] - a[0]);
+  };
+  for (let i = 1; i < n; i++) if (s <= tab[i][0]) {
+    const a = tab[i - 1], c = tab[i], h = c[0] - a[0];
+    const k = (s - a[0]) / h, k2 = k * k, k3 = k2 * k;
+    return (2 * k3 - 3 * k2 + 1) * a[1] + (k3 - 2 * k2 + k) * h * m(i - 1) + (-2 * k3 + 3 * k2) * c[1] + (k3 - k2) * h * m(i);
+  }
+  return tab[n - 1][1];
+}
+const ridge = s => (s > 0.5 && s < 0.64) ? 20 * Math.sin(Math.PI * (s - 0.5) / 0.14) : 0;
+
+function dolphinPose(t) {
+  const a = TAU * t / T;
+  return { x: 545 + 30 * Math.sin(a), y: 960 + 24 * Math.sin(2 * a + 0.4), r: 0.33 + 0.05 * Math.sin(a + 0.8) };
+}
+function dolphinSpine(t) {
+  const ph = TAU * 3 * t / T;
+  const P = [], N = [], TH = [];
+  let x = 0, y = 0; const ds = BL / NS;
+  for (let i = 0; i <= NS; i++) {
+    const s = i / NS;
+    const th = 0.42 * Math.pow(s, 1.6) * Math.sin(ph - 2.3 * s) + 0.04 * Math.sin(ph + 0.5);
+    P.push([x, y]); N.push([-Math.cos(th), Math.sin(th)]); TH.push(th);
+    x += Math.sin(th) * ds; y += Math.cos(th) * ds;
+  }
+  const c = P[Math.round(0.45 * NS)];
+  for (const p of P) { p[0] -= c[0]; p[1] -= c[1] + BL * 0.05; }
+  return { P, N, TH, ph };
+}
+const at = (sp, s, off) => {
+  const i = Math.round(s * NS), p = sp.P[i], n = sp.N[i];
+  return [p[0] + n[0] * off, p[1] + n[1] * off];
+};
+
+function paddle(A, ang, len, wid) {
+  const ca = Math.cos(ang), sa = Math.sin(ang), L = [], R = [];
+  for (let i = 0; i <= 12; i++) {
+    const s = i / 12;
+    const w = s < 0.6 ? wid * (0.38 + 0.62 * Math.sin(s / 0.6 * Math.PI / 2)) : wid * Math.sqrt(Math.max(0, 1 - Math.pow((s - 0.6) / 0.4, 2)));
+    const ax = s * len;
+    L.push([A[0] + ax * ca - w * sa, A[1] + ax * sa + w * ca]);
+    R.push([A[0] + ax * ca + w * sa * 0.55, A[1] + ax * sa - w * ca * 0.55]);
+  }
+  return L.concat(R.reverse());
+}
+
+function drawDolphin(t) {
+  const pose = dolphinPose(t);
+  const sp = dolphinSpine(t);
+  const { P, N, TH, ph } = sp;
+  ctx.save();
+  cam(0.8, t);
+  ctx.translate(pose.x, pose.y);
+  ctx.rotate(pose.r);
+  const shBig = { a: .4, b: 34, x: 18, y: 26 };
+  const shSm = { a: .22, b: 7, x: 3, y: 4 };
+
+  // nadadeira de trás
+  {
+    const i = Math.round(0.33 * NS), th = TH[i];
+    const A = at(sp, 0.33, -prof(VENT, 0.33) * 0.15);
+    const beta = 0.5 + 0.15 * Math.sin(ph + 2);
+    const tx = Math.sin(th), ty = Math.cos(th), vx = N[i][0] * -1, vy = N[i][1] * -1;
+    const ang = Math.atan2(ty * Math.cos(beta) + vy * Math.sin(beta), tx * Math.cos(beta) + vx * Math.sin(beta));
+    const p = new Path2D(); smoothClosed(p, paddle(A, ang, 135, 54));
+    cut(p, '#b9536c', shSm, 0, 0, 0.5);
+  }
+  // cauda
+  {
+    const thN = TH[NS], E = P[NS];
+    const tf = thN + 0.35 * Math.sin(ph - 2.3 - 0.9);
+    const ux = Math.sin(tf), uy = Math.cos(tf), wx = -Math.cos(tf), wy = Math.sin(tf);
+    const loc = [[-14, 12], [22, 50], [64, 124], [76, 114], [52, 44], [62, 0], [52, -44], [76, -114], [64, -124], [22, -50], [-14, -12]];
+    const pts = loc.map(([u, w]) => [E[0] + ux * u + wx * w, E[1] + uy * u + wy * w]);
+    const p = new Path2D(); smoothClosed(p, pts);
+    cut(p, '#e07b93', shBig, 0, 0, 0.5);
+  }
+  // corpo
+  const D = [], V = [];
+  for (let i = 0; i <= NS; i++) {
+    const s = i / NS;
+    const d = prof(DORS, s) + ridge(s), v = prof(VENT, s);
+    D.push([P[i][0] + N[i][0] * d, P[i][1] + N[i][1] * d]);
+    V.push([P[i][0] - N[i][0] * v, P[i][1] - N[i][1] * v]);
+  }
+  const body = new Path2D();
+  smoothClosed(body, D.concat(V.slice().reverse()));
+  cut(body, '#ef8ea4', shBig, 0, 0, 0.55);
+
+  // dorso mais escuro
+  {
+    const s0 = 0.34, s1 = 0.96, out = [], inn = [];
+    for (let i = Math.round(s0 * NS); i <= Math.round(s1 * NS); i++) {
+      const s = i / NS, u = (s - s0) / (s1 - s0);
+      const d = prof(DORS, s) + ridge(s);
+      out.push([P[i][0] + N[i][0] * (d + 1), P[i][1] + N[i][1] * (d + 1)]);
+      const k = d * (0.97 - 0.42 * Math.pow(Math.sin(Math.PI * u), 0.8));
+      inn.push([P[i][0] + N[i][0] * k, P[i][1] + N[i][1] * k]);
+    }
+    const p = new Path2D(); smoothClosed(p, out.concat(inn.reverse()));
+    cut(p, '#de7690', shSm, 0, 0, 0.5);
+  }
+  // barriga clara
+  {
+    const s0 = 0.17, s1 = 0.84, out = [], inn = [];
+    for (let i = Math.round(s0 * NS); i <= Math.round(s1 * NS); i++) {
+      const s = i / NS, u = (s - s0) / (s1 - s0);
+      const v = prof(VENT, s);
+      out.push([P[i][0] - N[i][0] * (v + 1), P[i][1] - N[i][1] * (v + 1)]);
+      const k = v * (0.96 - 0.7 * Math.pow(Math.sin(Math.PI * u), 0.7));
+      inn.push([P[i][0] - N[i][0] * k, P[i][1] - N[i][1] * k]);
+    }
+    const p = new Path2D(); smoothClosed(p, out.concat(inn.reverse()));
+    cut(p, '#f9c6cf', shSm, 0, 0, 0.45);
+  }
+  // brilho no melão (testa)
+  {
+    const pts = [];
+    for (let i = Math.round(0.2 * NS); i <= Math.round(0.33 * NS); i++) {
+      const s = i / NS; pts.push(at(sp, s, prof(DORS, s) * 0.92));
+    }
+    for (let i = Math.round(0.31 * NS); i >= Math.round(0.21 * NS); i--) {
+      const s = i / NS, u = (s - 0.21) / 0.1;
+      pts.push(at(sp, s, prof(DORS, s) * (0.9 - 0.45 * Math.sin(Math.PI * Math.min(1, u)))));
+    }
+    const p = new Path2D(); poly(p, pts);
+    cut(p, '#f7b3c2', { a: .15, b: 5, x: 2, y: 3 }, 0, 0, 0.4);
+  }
+  // boca (linha recortada) e olho
+  {
+    const mp = new Path2D();
+    for (let i = 1; i <= Math.round(0.21 * NS); i++) {
+      const s = i / NS;
+      const off = -prof(VENT, s) * 0.15 + (s > 0.16 ? (s - 0.16) * 260 : 0);
+      const q = at(sp, s, off);
+      if (i === 1) mp.moveTo(q[0], q[1]); else mp.lineTo(q[0], q[1]);
+    }
+    ctx.strokeStyle = '#a3445c'; ctx.lineWidth = 5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.stroke(mp);
+    const e = at(sp, 0.235, 16);
+    ctx.save();
+    ctx.shadowColor = 'rgba(60,10,25,.35)'; ctx.shadowBlur = 3; ctx.shadowOffsetX = 1; ctx.shadowOffsetY = 2;
+    ctx.fillStyle = '#3b1a26'; ctx.beginPath(); ctx.arc(e[0], e[1], 10, 0, TAU); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = '#fff6ea'; ctx.beginPath(); ctx.arc(e[0] - 3, e[1] - 4, 3.2, 0, TAU); ctx.fill();
+    // espiráculo
+    const b = at(sp, 0.31, prof(DORS, 0.31) * 0.8);
+    ctx.strokeStyle = '#b8566f'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(b[0], b[1], 9, Math.PI * 0.9 + TH[28], Math.PI * 1.9 + TH[28]); ctx.stroke();
+  }
+  // nadadeira da frente
+  {
+    const i = Math.round(0.35 * NS), th = TH[i];
+    const A = at(sp, 0.35, -prof(VENT, 0.35) * 0.45);
+    const beta = 0.8 + 0.2 * Math.sin(ph + 1.2);
+    const tx = Math.sin(th), ty = Math.cos(th), vx = -N[i][0], vy = -N[i][1];
+    const ang = Math.atan2(ty * Math.cos(beta) + vy * Math.sin(beta), tx * Math.cos(beta) + vx * Math.sin(beta));
+    const p = new Path2D(); smoothClosed(p, paddle(A, ang, 165, 66));
+    cut(p, '#e47e97', { a: .3, b: 12, x: 6, y: 9 }, 0, 0, 0.5);
+  }
+  ctx.restore();
+}
+
+/* ---------- bolhas de papel ---------- */
+function bubbles(t) {
+  ctx.save();
+  cam(0.8, t);
+  const NB = 16, ring = new Path2D(), hi = new Path2D();
+  const pieces = [];
+  for (let i = 0; i < NB; i++) {
+    const tau = frac(2 * t / T + i / NB);
+    const tb = t - tau * T / 2;
+    const pose = dolphinPose(((tb % T) + T) % T);
+    const c = Math.cos(pose.r), s = Math.sin(pose.r);
+    const lx = -80, ly = -135; // perto do espiráculo
+    const ex = pose.x + lx * c - ly * s, ey = pose.y + lx * s + ly * c;
+    const ax = -Math.sin(pose.r), ay = Math.cos(pose.r);   // eixo cabeça->cauda
+    const nx = -Math.cos(pose.r), ny = -Math.sin(pose.r);  // lado do dorso
+    const dist = tau * 1150, side = 40 + tau * 170 + 50 * (hash(i) - 0.5);
+    const x = ex + ax * dist + nx * side + 22 * Math.sin(TAU * 2 * tau + i);
+    const y = ey + ay * dist + ny * side;
+    const r = (7 + 13 * hash(i * 9 + 1)) * (1 + 0.4 * tau);
+    const al = Math.min(1, Math.max(0, tau - 0.03) / 0.12) * Math.min(1, (1 - tau) / 0.15);
+    pieces.push([x, y, r, al]);
+  }
+  for (const [x, y, r, al] of pieces) {
+    if (al <= 0.01) continue;
+    ctx.globalAlpha = al;
+    ctx.save();
+    ctx.shadowColor = 'rgba(8,28,24,.25)'; ctx.shadowBlur = 6; ctx.shadowOffsetX = 3; ctx.shadowOffsetY = 5;
+    ctx.fillStyle = '#f6efdc';
+    ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.arc(x, y, r * 0.62, 0, TAU, true); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(x - r * 0.3, y - r * 0.3, r * 0.2, 0, TAU); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+/* ---------- vinheta ---------- */
+let vig = null;
+function vignette() {
+  if (!vig) {
+    vig = ctx.createRadialGradient(W / 2, H * 0.45, W * 0.35, W / 2, H * 0.5, H * 0.75);
+    vig.addColorStop(0, 'rgba(6,22,20,0)');
+    vig.addColorStop(1, 'rgba(6,22,20,0.5)');
+  }
+  ctx.fillStyle = vig; ctx.fillRect(0, 0, W, H);
+}
+
+/* ---------- quadro ---------- */
+function draw(t) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  background(t);
+  drawLayer(LAYERS[0], t);
+  drawLayer(LAYERS[1], t);
+  shafts(t);
+  fish(t);
+  drawLayer(LAYERS[2], t);
+  specks(t);
+  drawDolphin(t);
+  bubbles(t);
+  drawLayer(LAYERS[3], t);
+  drawLayer(LAYERS[4], t);
+  vignette();
+}
+function frame(now) {
+  const t = ((now % T) + T) % T;
+  draw(t);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Garça em Nanquim</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden}
+  canvas{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:block}
+</style>
+</head>
+<body>
+<canvas id="c" width="1080" height="1920"></canvas>
+<script>
+(() => {
+const C = document.getElementById('c'), X = C.getContext('2d', { willReadFrequently: true });
+const W = 1080, H = 1920, LOOP = 6000, TAU = Math.PI * 2, OM = TAU / 6;
+function fit(){ const s = Math.min(innerWidth / W, innerHeight / H); C.style.width = W*s + 'px'; C.style.height = H*s + 'px'; }
+addEventListener('resize', fit); fit();
+
+const INK = '22,18,16', PAPER = '241,234,218', VERM = '196,46,26';
+function mk(w, h){ const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d', { willReadFrequently: true }); return c; }
+function rng(s){ return () => { s |= 0; s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const lerp = (a, b, f) => a + (b - a) * f;
+const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+
+// ---------- curvas ----------
+function spline(P, closed, seg){
+  seg = seg || 10; const out = []; const n = P.length;
+  const get = i => closed ? P[(i + n) % n] : P[Math.max(0, Math.min(n - 1, i))];
+  const last = closed ? n : n - 1;
+  for (let i = 0; i < last; i++){
+    const p0 = get(i - 1), p1 = get(i), p2 = get(i + 1), p3 = get(i + 2);
+    for (let k = 0; k < seg; k++){
+      const t = k / seg, t2 = t * t, t3 = t2 * t;
+      out.push([
+        0.5 * ((2*p1[0]) + (-p0[0] + p2[0]) * t + (2*p0[0] - 5*p1[0] + 4*p2[0] - p3[0]) * t2 + (-p0[0] + 3*p1[0] - 3*p2[0] + p3[0]) * t3),
+        0.5 * ((2*p1[1]) + (-p0[1] + p2[1]) * t + (2*p0[1] - 5*p1[1] + 4*p2[1] - p3[1]) * t2 + (-p0[1] + 3*p1[1] - 3*p2[1] + p3[1]) * t3)
+      ]);
+    }
+  }
+  if (!closed) out.push(P[n - 1]);
+  return out;
+}
+function resample(P, step){
+  const S = []; let acc = 0; const L = [0];
+  for (let i = 1; i < P.length; i++){ acc += Math.hypot(P[i][0] - P[i-1][0], P[i][1] - P[i-1][1]); L.push(acc); }
+  const n = Math.max(2, Math.ceil(acc / step)); let j = 1;
+  for (let k = 0; k <= n; k++){
+    const s = k / n * acc;
+    while (j < P.length - 1 && L[j] < s) j++;
+    const seg = (L[j] - L[j-1]) || 1, f = Math.min(1, Math.max(0, (s - L[j-1]) / seg));
+    const a = P[j-1], b = P[j];
+    S.push({ x: a[0] + (b[0] - a[0]) * f, y: a[1] + (b[1] - a[1]) * f });
+  }
+  for (let i = 0; i < S.length; i++){
+    const a = S[Math.max(0, i - 1)], b = S[Math.min(S.length - 1, i + 1)];
+    const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy) || 1;
+    S[i].nx = -dy / l; S[i].ny = dx / l; S[i].u = i / (S.length - 1);
+  }
+  return S;
+}
+
+// ---------- pincel de nanquim (núcleo + cerdas secas) ----------
+function brush(g, pts, w0, w1, rgb, a, seed, o){
+  o = o || {}; const dry = o.dry ?? 0.3, core = o.core ?? 0.62, smooth = o.smooth ?? true;
+  const R = rng(seed);
+  const S = resample(smooth && pts.length > 2 ? spline(pts, false, 8) : pts, 2.5);
+  const n = S.length;
+  const wid = u => (w0 + (w1 - w0) * u) * (0.35 + 0.65 * sstep(0, o.press ?? 0.07, u)) * (o.tail ? (1 - 0.8 * sstep(0.85, 1, u)) : 1);
+  // núcleo
+  g.fillStyle = `rgba(${rgb},${a})`;
+  g.beginPath();
+  for (let i = 0; i < n; i++){ const p = S[i], w = wid(p.u) * core / 2; g.lineTo(p.x + p.nx * w, p.y + p.ny * w); }
+  for (let i = n - 1; i >= 0; i--){ const p = S[i], w = wid(p.u) * core / 2; g.lineTo(p.x - p.nx * w, p.y - p.ny * w); }
+  g.closePath(); g.fill();
+  // cerdas
+  const wm = Math.max(w0, w1);
+  const nb = Math.max(3, Math.min(16, Math.round(wm / 1.8)));
+  g.lineCap = 'round'; g.strokeStyle = `rgba(${rgb},${a * 0.9})`;
+  g.lineWidth = Math.max(0.7, wm / nb * 0.95);
+  for (let j = 0; j < nb; j++){
+    const off = ((j + 0.5) / nb - 0.5) * (1.05 + R() * 0.15) + (R() - 0.5) * 0.04;
+    const load = 0.95 + R() * 0.35, ph = R() * 9, fr = 6 + R() * 16;
+    const dec = dry * (0.5 + R() * 1.4) * (0.35 + Math.abs(off) * 2.4);
+    g.beginPath(); let on = false;
+    for (let i = 0; i < n; i++){
+      const p = S[i], u = p.u;
+      const ink = load - dec * u * 1.6 + 0.22 * Math.sin(u * fr + ph) + 0.12 * Math.sin(u * fr * 3.7 + ph * 2);
+      const w = wid(u);
+      const x = p.x + p.nx * w * off, y = p.y + p.ny * w * off;
+      if (ink > 0.5){ if (!on){ g.moveTo(x, y); on = true; } else g.lineTo(x, y); }
+      else on = false;
+    }
+    g.stroke();
+  }
+}
+
+// ---------- utilidades de camada ----------
+function soft(g, Wd, Hd, px, fn, sc){
+  sc = sc || 4; const a = mk(Math.ceil(Wd / sc), Math.ceil(Hd / sc)), ag = a.getContext('2d');
+  ag.scale(1 / sc, 1 / sc); fn(ag);
+  const b = mk(a.width, a.height), bg = b.getContext('2d'); bg.filter = `blur(${px / sc}px)`; bg.drawImage(a, 0, 0);
+  g.imageSmoothingEnabled = true; g.drawImage(b, 0, 0, Wd, Hd);
+}
+function makeTile(Wt, Ht, seed, draw, blur){
+  const big = mk(Wt * 3, Ht), bg = big.getContext('2d');
+  for (let k = 0; k < 3; k++){ bg.save(); bg.translate(Wt * k, 0); draw(bg, rng(seed)); bg.restore(); }
+  const t = mk(Wt, Ht), tg = t.getContext('2d');
+  if (blur) tg.filter = `blur(${blur}px)`;
+  tg.drawImage(big, -Wt, 0);
+  return t;
+}
+function drawTile(img, x, y, alpha){
+  const Wt = img.width; let o = ((x % Wt) + Wt) % Wt;
+  X.globalAlpha = alpha ?? 1;
+  o = Math.round(o); y = Math.round(y);
+  for (let xx = o - Wt; xx < W + 2; xx += Wt) X.drawImage(img, xx, y);
+  X.globalAlpha = 1;
+}
+
+// =====================================================================
+// PAPEL (fixo: é o suporte)
+// =====================================================================
+const GRAIN = mk(W, H);
+(() => {
+  const g = GRAIN.getContext('2d'); const R = rng(11);
+  g.fillStyle = '#fff'; g.fillRect(0, 0, W, H);
+  // manchas de baixa frequência do papel de arroz
+  const lo = mk(36, 64), lg = lo.getContext('2d'), id = lg.createImageData(36, 64);
+  for (let i = 0; i < id.data.length; i += 4){ const v = 236 + R() * 19; id.data[i] = v; id.data[i+1] = v - 2; id.data[i+2] = v - 6; id.data[i+3] = 255; }
+  lg.putImageData(id, 0, 0);
+  g.imageSmoothingEnabled = true; g.globalCompositeOperation = 'multiply'; g.drawImage(lo, 0, 0, W, H);
+  // fibras
+  g.lineCap = 'round';
+  for (let i = 0; i < 2600; i++){
+    const x = R() * W, y = R() * H, a = R() * TAU, l = 6 + R() * 34;
+    g.strokeStyle = R() < 0.5 ? `rgba(120,100,80,${0.05 + R()*0.07})` : `rgba(255,255,255,0.5)`;
+    g.lineWidth = 0.5 + R() * 1.1;
+    g.beginPath(); g.moveTo(x, y);
+    g.quadraticCurveTo(x + Math.cos(a) * l * 0.5 + (R()-0.5)*8, y + Math.sin(a) * l * 0.5 + (R()-0.5)*8, x + Math.cos(a) * l, y + Math.sin(a) * l);
+    g.stroke();
+  }
+  g.globalCompositeOperation = 'source-over';
+  // grão fino
+  const im = g.getImageData(0, 0, W, H), d = im.data;
+  for (let i = 0; i < d.length; i += 4){ const n = (R() - 0.5) * 16; d[i] += n; d[i+1] += n; d[i+2] += n; }
+  g.putImageData(im, 0, 0);
+  // vinheta de papel antigo
+  g.globalCompositeOperation = 'multiply';
+  const vg = g.createRadialGradient(W/2, H*0.46, H*0.28, W/2, H*0.5, H*0.72);
+  vg.addColorStop(0, 'rgba(255,255,255,1)'); vg.addColorStop(1, 'rgba(196,178,150,1)');
+  g.fillStyle = vg; g.fillRect(0, 0, W, H);
+  g.globalCompositeOperation = 'source-over';
+})();
+
+// =====================================================================
+// CAMADA DISTANTE: lavagem do céu, água, linha de mata no horizonte
+// =====================================================================
+const HZ = 1150;
+const FAR = mk(W + 240, H); const FX = -120;
+(() => {
+  const g = FAR.getContext('2d'), R = rng(21), FW = FAR.width;
+  let gr = g.createLinearGradient(0, 0, 0, 1050);
+  gr.addColorStop(0, `rgba(${INK},0.34)`); gr.addColorStop(0.35, `rgba(${INK},0.13)`); gr.addColorStop(1, `rgba(${INK},0)`);
+  g.fillStyle = gr; g.fillRect(0, 0, FW, 1050);
+  soft(g, FW, 1100, 28, s => {
+    for (let i = 0; i < 16; i++){
+      s.fillStyle = `rgba(${INK},${0.03 + R() * 0.06})`;
+      s.beginPath(); s.ellipse(R() * FW, 60 + R() * 760, 180 + R() * 420, 25 + R() * 70, (R()-0.5)*0.15, 0, TAU); s.fill();
+    }
+  });
+  // água parada
+  gr = g.createLinearGradient(0, HZ - 8, 0, H);
+  gr.addColorStop(0, `rgba(${INK},0.10)`); gr.addColorStop(0.35, `rgba(${INK},0.22)`); gr.addColorStop(1, `rgba(${INK},0.42)`);
+  g.fillStyle = gr; g.fillRect(0, HZ - 8, FW, H - HZ + 8);
+  soft(g, FW, H, 5, s => {
+    for (let i = 0; i < 46; i++){
+      const y = HZ + 10 + Math.pow(R(), 1.3) * 760;
+      s.fillStyle = R() < 0.55 ? `rgba(${PAPER},${0.18 + R()*0.22})` : `rgba(${INK},${0.05 + R()*0.08})`;
+      s.beginPath(); s.ellipse(R() * FW, y, 80 + R() * 420, 1.5 + R() * 5 + (y - HZ) * 0.006, 0, 0, TAU); s.fill();
+    }
+  }, 2);
+  // mata distante
+  const T = mk(FW, H), tg = T.getContext('2d');
+  const p1 = R()*9, p2 = R()*9, p3 = R()*9;
+  tg.fillStyle = `rgb(${INK})`; tg.beginPath(); tg.moveTo(0, HZ + 4);
+  for (let x = 0; x <= FW; x += 4){
+    let h = 8 + 16 * (0.5 + 0.5 * Math.sin(x * 0.011 + p1)) + 12 * Math.max(0, Math.sin(x * 0.037 + p2)) + 6 * Math.sin(x * 0.13 + p3) * Math.sin(x*0.021);
+    tg.lineTo(x, HZ - h);
+  }
+  tg.lineTo(FW, HZ + 4); tg.closePath(); tg.fill();
+  for (let i = 0; i < 14; i++){
+    const x = R() * FW, h = 34 + R() * 46, lean = (R() - 0.5) * 8;
+    brush(tg, [[x, HZ - 6], [x + lean*0.5, HZ - h*0.5], [x + lean, HZ - h]], 3, 2, INK, 1, 100 + i, { dry: 0 });
+    for (let k = 0; k < 11; k++){
+      const a = -Math.PI - 0.3 + k / 10 * (Math.PI + 0.6), l = 9 + R() * 6;
+      brush(tg, [[x + lean, HZ - h], [x + lean + Math.cos(a) * l, HZ - h + Math.sin(a) * l + 3]], 2.2, 0.8, INK, 1, 200 + i*20 + k, { dry: 0, smooth: false });
+    }
+  }
+  g.filter = 'blur(3px)'; g.globalAlpha = 0.26; g.drawImage(T, 0, 0);
+  g.filter = 'blur(9px)'; g.globalAlpha = 0.12;
+  g.save(); g.translate(0, HZ * 2); g.scale(1, -1); g.drawImage(T, 0, 0); g.restore();
+  g.globalAlpha = 1; g.filter = 'none';
+  // névoa no pé da mata
+  gr = g.createLinearGradient(0, HZ - 50, 0, HZ + 40);
+  gr.addColorStop(0, `rgba(${PAPER},0)`); gr.addColorStop(0.6, `rgba(${PAPER},0.85)`); gr.addColorStop(1, `rgba(${PAPER},0)`);
+  g.fillStyle = gr; g.fillRect(0, HZ - 50, FW, 90);
+})();
+
+// =====================================================================
+// SOL VERMELHO (selo de cinábrio)
+// =====================================================================
+const SUN = mk(800, 800); const SR = 248, SX = 560, SY = 690;
+(() => {
+  const g = SUN.getContext('2d'), c = 400, R = rng(31);
+  let gr = g.createRadialGradient(c, c, SR * 0.9, c, c, SR * 1.7);
+  gr.addColorStop(0, `rgba(${VERM},0.22)`); gr.addColorStop(1, `rgba(${VERM},0)`);
+  g.fillStyle = gr; g.fillRect(0, 0, 800, 800);
+  g.filter = 'blur(7px)'; g.fillStyle = `rgba(${VERM},0.45)`;
+  g.beginPath(); g.arc(c, c, SR + 5, 0, TAU); g.fill(); g.filter = 'none';
+  gr = g.createRadialGradient(c - 60, c - 70, 20, c, c, SR);
+  gr.addColorStop(0, '#d9502e'); gr.addColorStop(0.7, '#c73a22'); gr.addColorStop(1, '#ad2817');
+  g.fillStyle = gr;
+  g.beginPath();
+  for (let i = 0; i <= 180; i++){ const a = i / 180 * TAU; const r = SR + Math.sin(a * 7 + 1) * 1.6 + Math.sin(a * 19) * 1.0; g.lineTo(c + Math.cos(a) * r, c + Math.sin(a) * r); }
+  g.fill();
+  g.save(); g.clip();
+  g.filter = 'blur(2px)';
+  for (let i = 0; i < 420; i++){
+    const a = R() * TAU, r = Math.sqrt(R()) * SR;
+    g.fillStyle = R() < 0.5 ? `rgba(150,25,12,${0.05 + R()*0.07})` : `rgba(235,110,70,${0.04 + R()*0.06})`;
+    g.beginPath(); g.ellipse(c + Math.cos(a) * r, c + Math.sin(a) * r, 4 + R() * 16, 3 + R() * 10, R() * 3, 0, TAU); g.fill();
+  }
+  g.filter = 'none';
+  g.lineWidth = 9; g.strokeStyle = 'rgba(130,18,8,0.30)'; g.beginPath(); g.arc(c, c, SR - 2, 0, TAU); g.stroke();
+  g.restore();
+})();
+
+// listras de reflexo em cinábrio (pinceladas horizontais secas)
+const STREAKS = [];
+for (let i = 0; i < 6; i++){
+  const s = mk(320, 26), g = s.getContext('2d');
+  brush(g, [[8, 13 + (i%3-1)], [110, 12], [210, 14], [312, 13 - (i%2)]], 12 + i % 3 * 3, 5, VERM, 0.85, 300 + i, { dry: 0.55, core: 0.4, press: 0.15, tail: true });
+  STREAKS.push(s);
+}
+
+// =====================================================================
+// NÉVOAS (manchas de papel lavado, ladrilháveis)
+// =====================================================================
+function mistDraw(n, hh, rx0, rx1, ry0, ry1, a0, a1, Wt){
+  return (g, R) => {
+    for (let i = 0; i < n; i++){
+      g.fillStyle = `rgba(${PAPER},${a0 + R() * (a1 - a0)})`;
+      g.beginPath(); g.ellipse(R() * Wt, hh / 2 + (R() - 0.5) * hh * 0.42, rx0 + R() * (rx1 - rx0), ry0 + R() * (ry1 - ry0), 0, 0, TAU); g.fill();
+    }
+  };
+}
+const MIST_HI = makeTile(1080, 360, 41, mistDraw(24, 360, 140, 360, 20, 50, 0.5, 0.9, 1080), 22);
+const MIST_HZ = makeTile(540, 420, 42, mistDraw(20, 420, 100, 240, 24, 60, 0.55, 0.95, 540), 20);
+const MIST_LO = makeTile(1080, 440, 43, mistDraw(20, 440, 160, 380, 22, 60, 0.4, 0.75, 1080), 26);
+
+// =====================================================================
+// CAMADA DO MEIO: carandás, capões, reflexos e riscos d'água
+// =====================================================================
+const MB = 1182;
+function palm(g, R, x, base, h, lean, rgb, seed){
+  const tx = x + lean, ty = base - h;
+  brush(g, [[x, base + 2], [x + lean * 0.3 + (R()-0.5)*4, base - h * 0.5], [tx, ty + 6]], 9, 5.5, rgb, 1, seed, { dry: 0.35, core: 0.55 });
+  for (let k = 0; k < 7; k++){ // saia de folhas secas
+    const a = Math.PI / 2 + (R() - 0.5) * 1.3, l = 26 + R() * 26;
+    brush(g, [[tx, ty + 4], [tx + Math.cos(a) * l * 0.6, ty + 4 + Math.sin(a) * l * 0.5], [tx + Math.cos(a) * l, ty + 6 + Math.sin(a) * l]], 6, 2, rgb, 0.55, seed + 50 + k, { dry: 0.6, core: 0.4 });
+  }
+  for (let k = 0; k < 22; k++){ // leque
+    const a = -Math.PI - 0.55 + (k + R() * 0.6) / 22 * (Math.PI + 1.1), l = 40 + R() * 34;
+    const ex = tx + Math.cos(a) * l, ey = ty + Math.sin(a) * l * 0.92 + l * 0.18;
+    brush(g, [[tx, ty], [tx + Math.cos(a) * l * 0.5, ty + Math.sin(a) * l * 0.5 + 2], [ex, ey]], 7, 2.2, rgb, 1, seed + 100 + k, { dry: 0.5, core: 0.5 });
+    for (let f = -1; f <= 1; f++){
+      const b = a + f * 0.22;
+      brush(g, [[ex, ey], [ex + Math.cos(b) * 13, ey + Math.sin(b) * 13 + 3]], 2.4, 0.6, rgb, 0.9, seed + 300 + k * 3 + f, { dry: 0.2, smooth: false, tail: true });
+    }
+  }
+}
+function capao(g, R, cx, base, wd, ht){
+  for (let k = 0; k < 340; k++){
+    const u = R() * 2 - 1, top = base - ht * Math.sqrt(1 - u * u) * (0.75 + 0.25 * R());
+    const y = top + (base - top) * Math.pow(R(), 1.7), x = cx + u * wd / 2;
+    const depth = (y - top) / (base - top + 1);
+    g.fillStyle = `rgba(${INK},${0.18 + 0.32 * R() + depth * 0.2})`;
+    g.beginPath(); g.ellipse(x, y, 7 + R() * 12, 3.5 + R() * 6, (R() - 0.5) * 0.5, 0, TAU); g.fill();
+  }
+  for (let k = 0; k < 5; k++){
+    const x = cx + (R() - 0.5) * wd * 0.6;
+    brush(g, [[x, base + 2], [x + (R()-0.5)*6, base - ht * 0.35]], 4, 2, INK, 0.8, 900 + k, { dry: 0.4 });
+  }
+}
+const MID = makeTile(1080, H, 51, (g, R) => {
+  const T = mk(1080 + 400, H), tg = T.getContext('2d'); tg.translate(200, 0);
+  const tone = '48,42,38';
+  capao(tg, R, 180, MB, 320, 130);
+  capao(tg, R, 760, MB, 230, 96);
+  palm(tg, R, 350, MB, 312, 14, tone, 1000);
+  palm(tg, R, 432, MB, 236, -10, tone, 2000);
+  palm(tg, R, 905, MB, 350, 20, tone, 3000);
+  palm(tg, R, 1000, MB, 262, -12, tone, 4000);
+  palm(tg, R, 610, MB, 180, 6, tone, 5000);
+  // margem
+  brush(tg, [[-200, MB + 2], [200, MB], [600, MB + 3], [1000, MB + 1], [1280, MB + 2]], 7, 6, INK, 0.75, 6000, { dry: 0.7, core: 0.35 });
+  for (let k = 0; k < 60; k++){
+    const x = -150 + R() * 1380, h = 8 + R() * 22;
+    brush(tg, [[x, MB + 3], [x + (R()-0.5) * 10, MB - h]], 3, 0.8, INK, 0.8, 6100 + k, { dry: 0.3, smooth: false, tail: true });
+  }
+  // reflexo quebrado
+  const Rf = mk(T.width, H), rg = Rf.getContext('2d');
+  rg.filter = 'blur(2px)'; rg.globalAlpha = 0.34;
+  rg.save(); rg.translate(0, MB * 2 + 4); rg.scale(1, -1); rg.drawImage(T, 0, 0); rg.restore();
+  rg.filter = 'none'; rg.globalAlpha = 1;
+  rg.globalCompositeOperation = 'destination-out';
+  for (let k = 0; k < 70; k++){
+    const y = MB + 6 + Math.pow(R(), 1.2) * 400;
+    rg.fillStyle = `rgba(0,0,0,${0.5 + R() * 0.5})`;
+    rg.fillRect(R() * T.width - 100, y, 60 + R() * 500, 1 + R() * 3.5);
+  }
+  rg.globalCompositeOperation = 'source-over';
+  g.drawImage(Rf, -200, 0);
+  g.drawImage(T, -200, 0);
+  // riscos de luz na água
+  for (let k = 0; k < 34; k++){
+    const y = MB + 14 + Math.pow(R(), 1.5) * 520, x = R() * 1080, l = 60 + R() * 330;
+    brush(g, [[x, y], [x + l * 0.5, y + (R()-0.5) * 2], [x + l, y]], 2 + R() * 3 + (y - MB) * 0.006, 1, PAPER, 0.75, 7000 + k, { dry: 0.6, core: 0.45, tail: true });
+  }
+  for (let k = 0; k < 16; k++){
+    const y = MB + 30 + Math.pow(R(), 1.3) * 560, x = R() * 1080, l = 40 + R() * 200;
+    brush(g, [[x, y], [x + l, y + (R()-0.5) * 2]], 1.6 + R() * 2, 0.8, INK, 0.35, 7500 + k, { dry: 0.6, core: 0.4, tail: true, smooth: false });
+  }
+}, 0.6);
+
+// =====================================================================
+// CAMADA DA FRENTE: juncos, capim d'água e aguapés em nanquim puro
+// =====================================================================
+const NEAR = makeTile(1080, H, 61, (g, R) => {
+  // aguapés flutuando
+  const pads = [[150, 1720, 46], [470, 1800, 58], [610, 1690, 34], [870, 1770, 52], [1010, 1860, 40], [300, 1880, 60], [760, 1640, 28]];
+  pads.forEach((p, i) => {
+    const [x, y, r] = p, ry = r * 0.26;
+    g.fillStyle = `rgba(${INK},0.5)`;
+    g.beginPath(); g.ellipse(x, y, r, ry, 0, 0.25, TAU - 0.12); g.lineTo(x, y); g.closePath(); g.fill();
+    brush(g, [[x - r, y], [x - r * 0.4, y + ry], [x + r * 0.5, y + ry * 0.95], [x + r, y + 2]], 4, 2, INK, 0.95, 8000 + i, { dry: 0.5, core: 0.5 });
+    g.fillStyle = `rgba(${PAPER},0.35)`; g.beginPath(); g.ellipse(x - r * 0.25, y - ry * 0.3, r * 0.4, ry * 0.25, 0, 0, TAU); g.fill();
+  });
+  // touceiras de junco
+  const clumps = [[40, 18, 1], [300, 13, 0.75], [560, 6, 0.5], [800, 16, 0.95], [985, 10, 0.7]];
+  clumps.forEach((cl, ci) => {
+    const [cx, nbl, sc] = cl;
+    for (let k = 0; k < nbl; k++){
+      const bx = cx + (R() - 0.5) * 70, h = (150 + R() * 300) * sc + (k === 0 ? 160 * sc : 0);
+      const lean = (R() - 0.5) * 150, bend = (R() - 0.5) * 60;
+      const pts = [[bx, H + 20], [bx + lean * 0.25 + bend * 0.3, H - h * 0.4], [bx + lean * 0.6 + bend, H - h * 0.78], [bx + lean, H - h]];
+      brush(g, pts, 9 + R() * 4, 1, INK, 1, 9000 + ci * 50 + k, { dry: 0.45, core: 0.6, tail: true });
+      if (R() < 0.22){ // pendão
+        const tx = bx + lean, ty = H - h;
+        for (let s = 0; s < 9; s++){
+          g.fillStyle = `rgba(${INK},${0.5 + R() * 0.4})`;
+          g.beginPath(); g.ellipse(tx + (R() - 0.5) * 10, ty - 4 - s * 5, 3.5, 2, R(), 0, TAU); g.fill();
+        }
+      }
+    }
+  });
+}, 0);
+
+// =====================================================================
+// SELO (marca abstrata em cinábrio, sem letras)
+// =====================================================================
+const SEAL = mk(90, 90);
+(() => {
+  const g = SEAL.getContext('2d'), R = rng(71);
+  g.fillStyle = 'rgb(186,40,24)';
+  g.beginPath(); g.moveTo(8, 9); g.lineTo(82, 7); g.lineTo(83, 81); g.lineTo(7, 83); g.closePath(); g.fill();
+  g.strokeStyle = `rgb(${PAPER})`; g.lineCap = 'round'; g.lineWidth = 5;
+  g.beginPath(); g.arc(45, 34, 13, 0, TAU); g.stroke();
+  g.beginPath(); g.moveTo(18, 62); g.quadraticCurveTo(32, 50, 45, 62); g.quadraticCurveTo(58, 74, 72, 60); g.stroke();
+  g.globalCompositeOperation = 'destination-out';
+  for (let i = 0; i < 90; i++){ g.fillStyle = `rgba(0,0,0,${0.3 + R() * 0.7})`; g.beginPath(); g.arc(R() * 90, R() * 90, 0.6 + R() * 1.6, 0, TAU); g.fill(); }
+  g.globalCompositeOperation = 'source-over';
+})();
+
+// =====================================================================
+// GARÇA-BRANCA (desenhada a cada quadro)
+// =====================================================================
+const HC = mk(780, 840), HG = HC.getContext('2d'), HOX = 390, HOY = 480, HS = 1.12;
+const WHITE = '#fcf9f2';
+const WING_LEAD = [[-22, 0], [-44, 60], [-56, 130], [-50, 192], [-22, 262], [18, 330], [52, 366]];
+const WING_TRAIL = [[86, 352], [98, 322], [108, 288], [104, 252], [98, 216], [88, 176], [82, 132], [76, 88], [62, 42], [44, 0]];
+function wingPts(side, fin, fout, sx, sy){
+  const proj = ([x, z]) => {
+    const f = lerp(fin, fout, sstep(120, 360, z));
+    const Y = -z * Math.sin(f), Z = side * z * Math.cos(f);
+    const sw = Math.pow(z / 366, 2) * 46 * (0.55 + 0.45 * Math.cos(f));
+    return [sx + (x + sw + Z * 0.34 + Math.sin(f) * z * 0.05) * HS, sy + (Y + Z * 0.12 - Math.sin(Math.PI * z / 366) * 14 * Math.cos(f)) * HS];
+  };
+  return { lead: WING_LEAD.map(proj), trail: WING_TRAIL.map(proj), proj };
+}
+function softStroke(g, pts, w, a){
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  const S = spline(pts, false, 6);
+  for (let k = 0; k < 4; k++){
+    g.strokeStyle = `rgba(${INK},${a / 3.2})`; g.lineWidth = w * (1 - k * 0.24);
+    g.beginPath(); S.forEach((q, i) => i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1])); g.stroke();
+  }
+}
+function fillPoly(g, P, style){ g.fillStyle = style; g.beginPath(); P.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.closePath(); g.fill(); }
+function drawWing(g, side, fin, fout, sx, sy, seed){
+  const w = wingPts(side, fin, fout, sx, sy);
+  const outline = spline(w.lead.concat(w.trail), true, 6);
+  fillPoly(g, outline, WHITE);
+  g.save(); g.beginPath(); outline.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.closePath(); g.clip();
+  // lavagem de sombra ao longo da borda de fuga
+  softStroke(g, w.trail, 34, side < 0 ? 0.30 : 0.13);
+  if (side < 0) fillPoly(g, outline, `rgba(${INK},0.10)`);
+  // penas
+  for (let k = 0; k < 8; k++){
+    const z = 40 + k * 42, xa = 40 + k * 6, a = w.proj([xa + 40, z + 8]), b = w.proj([-20 + k * 4, z - 30]);
+    brush(g, [a, b], 1.6, 0.6, INK, 0.24, seed + 20 + k, { dry: 0.4, smooth: false, tail: true });
+  }
+  g.restore();
+  // primárias recortadas
+  for (let k = 0; k < 5; k++){
+    const a = w.proj([94 + k * 4, 366 - k * 30]), b = w.proj([52 + k * 7, 300 - k * 30]);
+    brush(g, [b, a], 4.2, 1, INK, side < 0 ? 0.45 : 0.62, seed + 40 + k, { dry: 0.45, core: 0.5, smooth: false, tail: true });
+  }
+  brush(g, w.lead, side < 0 ? 4.5 : 7.5, 1.5, INK, 0.95, seed + 1, { dry: 0.45, core: 0.6, tail: true });
+  brush(g, w.trail, 1.6, 3, INK, 0.6, seed + 2, { dry: 0.6, core: 0.45 });
+}
+function drawHeron(g, t){
+  g.clearRect(0, 0, HC.width, HC.height);
+  const p = TAU * 4 * t / 6;
+  const fin = 0.42 + 0.6 * Math.sin(p), fout = 0.4 + 0.78 * Math.sin(p - 0.75);
+  const ox = HOX, oy = HOY + 9 * Math.sin(p - 0.4);
+  const P = ([x, y]) => [ox + x * HS, oy + y * HS];
+  // asa de trás
+  drawWing(g, -1, fin, fout, ox + 10 * HS, oy - 18 * HS, 500);
+  // pernas
+  const ls = 3 * Math.sin(p + 1);
+  for (let k = 0; k < 2; k++){
+    const a = P([66, 10 + k * 2]), b = P([170, 20 + k * 5 + ls * 0.5]), c = P([262, 28 + k * 9 + ls]);
+    brush(g, [a, b, c], 5, 3, INK, 1, 600 + k, { dry: 0.25, core: 0.7 });
+    for (let f = -1; f <= 1; f++) brush(g, [c, [c[0] + 20 * HS, c[1] + f * 7 * HS + 2]], 2.4, 0.8, INK, 0.9, 610 + k * 3 + f, { dry: 0.1, smooth: false, tail: true });
+  }
+  // plumas nupciais
+  g.lineCap = 'round';
+  for (let k = 0; k < 7; k++){
+    const pts = [];
+    for (let i = 0; i <= 14; i++){
+      const u = i / 14, x = 28 + u * (150 + k * 8), y = -16 + u * (20 + k * 3) + Math.sin(u * 5 - p * 0.5 + k) * 6 * u;
+      pts.push(P([x, y]));
+    }
+    g.strokeStyle = 'rgba(252,249,242,0.95)'; g.lineWidth = 2.6; g.beginPath(); pts.forEach((q, i) => i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1])); g.stroke();
+    g.strokeStyle = `rgba(${INK},0.32)`; g.lineWidth = 0.9; g.stroke();
+  }
+  // corpo
+  const body = spline([[-62, -6], [-20, -20], [30, -22], [92, -10], [140, 2], [96, 13], [20, 19], [-40, 12]].map(P), true, 10);
+  fillPoly(g, body, WHITE);
+  g.save(); g.beginPath(); body.forEach((q, i) => i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1])); g.closePath(); g.clip();
+  softStroke(g, [P([-50, 18]), P([20, 24]), P([110, 13])], 26, 0.2);
+  g.restore();
+  // pescoço em S recolhido
+  const neckC = spline([[-48, -4], [-88, -22], [-84, -50], [-104, -68], [-114, -76]].map(P), false, 10);
+  const NS = resample(neckC, 3), L = [], Rr = [];
+  NS.forEach(s => { const w = lerp(13, 8, s.u) * HS; L.push([s.x + s.nx * w, s.y + s.ny * w]); Rr.push([s.x - s.nx * w, s.y - s.ny * w]); });
+  fillPoly(g, L.concat(Rr.reverse()), WHITE);
+  // cabeça
+  const hx = ox - 120 * HS, hy = oy - 78 * HS;
+  g.fillStyle = WHITE; g.beginPath(); g.ellipse(hx, hy, 17 * HS, 12 * HS, -0.15, 0, TAU); g.fill();
+  // bico (único toque de ocre)
+  const b0 = P([-128, -84]), b1 = P([-130, -71]), bt = P([-210, -70]);
+  g.fillStyle = 'rgba(206,160,60,0.95)'; g.beginPath(); g.moveTo(b0[0], b0[1]); g.quadraticCurveTo(b0[0] - 40, b0[1] + 2, bt[0], bt[1]); g.lineTo(b1[0], b1[1]); g.closePath(); g.fill();
+  brush(g, [b0, P([-170, -77]), bt], 2.4, 0.8, INK, 0.9, 720, { dry: 0.2, tail: true });
+  brush(g, [b1, P([-170, -70]), bt], 1.6, 0.6, INK, 0.7, 721, { dry: 0.2, tail: true });
+  // contornos do corpo (com bordas perdidas)
+  const B = body, nb = B.length;
+  brush(g, B.slice(0, Math.floor(nb * 0.42)), 3, 6, INK, 0.95, 730, { dry: 0.45, core: 0.6 });
+  brush(g, B.slice(Math.floor(nb * 0.5), Math.floor(nb * 0.9)), 5, 2.4, INK, 0.9, 731, { dry: 0.45, core: 0.6, tail: true });
+  brush(g, Rr.slice().reverse().slice(2), 5.5, 2.6, INK, 0.95, 732, { dry: 0.35, core: 0.6 });
+  brush(g, L.slice(4, Math.floor(L.length * 0.8)), 2, 1.4, INK, 0.7, 733, { dry: 0.5, core: 0.5, tail: true });
+  g.strokeStyle = `rgba(${INK},0.9)`; g.lineWidth = 2.4;
+  g.beginPath(); g.ellipse(hx, hy, 17 * HS, 12 * HS, -0.15, Math.PI * 0.75, Math.PI * 1.85); g.stroke();
+  g.fillStyle = `rgb(${INK})`; g.beginPath(); g.arc(hx - 6 * HS, hy - 3 * HS, 2.8, 0, TAU); g.fill();
+  // asa da frente
+  drawWing(g, 1, fin, fout, ox + 4 * HS, oy - 14 * HS, 800);
+}
+
+// pássaros distantes (traços em V)
+const BIRDS = [[230, 470, 0.0, 1.0], [300, 530, 1.7, 0.8], [840, 400, 3.1, 0.9], [905, 445, 4.4, 0.7]];
+
+// =====================================================================
+// QUADRO
+// =====================================================================
+function frame(ms){
+  const t = (((ms % LOOP) + LOOP) % LOOP) / 1000;
+  const ph = OM * t;
+  const cx = 26 * Math.sin(ph), cy = 14 * Math.sin(ph + 1.3);
+  const cam = d => [Math.round(cx * d), Math.round(cy * d)];
+
+  X.setTransform(1, 0, 0, 1, 0, 0);
+  X.fillStyle = `rgb(${PAPER})`; X.fillRect(0, 0, W, H);
+
+  // 1 — céu, água e mata distante
+  let [ax, ay] = cam(0.15); X.drawImage(FAR, FX + ax, ay);
+  if (ay > 0){ X.fillStyle = `rgba(${INK},0.34)`; X.fillRect(0, 0, W, ay); }
+  // 2 — sol
+  [ax, ay] = cam(0.08); const sx = SX + ax, sy = SY + ay;
+  X.drawImage(SUN, sx - 400, sy - 400);
+  // reflexo do sol em cinábrio
+  for (let i = 0; i < 20; i++){
+    const y = HZ + 8 + Math.pow(i, 1.32) * 13.5 + ay;
+    const fade = 1 - i / 21;
+    const w = (250 - i * 5) * (0.62 + 0.38 * Math.sin(TAU * 2 * t / 6 + i * 1.9)) + 30;
+    const dx = 14 * Math.sin(TAU * 3 * t / 6 + i * 0.9) + (i % 2 ? 10 : -10);
+    X.globalAlpha = 0.95 * fade;
+    X.drawImage(STREAKS[i % 6], sx - w / 2 + dx, y - 6 - i * 0.3, w, 12 + i * 0.6);
+  }
+  X.globalAlpha = 1;
+  // pássaros distantes
+  X.lineCap = 'round';
+  BIRDS.forEach(([bx, by, o, s]) => {
+    const x = bx + 22 * Math.sin(ph + o) + cx * 0.2, y = by + 9 * Math.sin(2 * ph + o) + cy * 0.2;
+    const q = Math.sin(TAU * 5 * t / 6 + o), sp = 15 * s;
+    X.strokeStyle = `rgba(${INK},0.62)`; X.lineWidth = 2.6 * s;
+    X.beginPath(); X.moveTo(x - sp, y - 5 * s - q * 8 * s); X.quadraticCurveTo(x - sp * 0.4, y - 4 * s, x, y);
+    X.quadraticCurveTo(x + sp * 0.4, y - 4 * s, x + sp, y - 5 * s - q * 8 * s); X.stroke();
+  });
+  // 3 — névoa alta passando à frente do sol
+  [ax, ay] = cam(0.2);
+  drawTile(MIST_HI, -1080 / 6 * 0.0 + 60 * Math.sin(ph + 2) + ax, 780 + ay, 0.8 + 0.12 * Math.sin(ph));
+  // 4 — carandás e capões (meio)
+  [ax, ay] = cam(0.5);
+  drawTile(MID, 1080 * t / 6 + ax, ay);
+  // 5 — névoa do horizonte
+  [ax, ay] = cam(0.38);
+  drawTile(MIST_HZ, 540 * t / 6 + ax, HZ - 250 + ay, 0.82);
+  // 6 — garça e o reflexo
+  const hx = 520 + 28 * Math.sin(ph + 0.4) + cx * 0.7, hy = 770 + 20 * Math.sin(2 * ph + 1.1) + cy * 0.7;
+  drawHeron(HG, t);
+  const ox = Math.round(hx - HOX), oy = Math.round(hy - HOY), A = HZ + 16 + cy * 0.4;
+  for (let s = 0; s < HC.height; s += 5){
+    const ys = oy + s, yr = 2 * A - ys - 5;
+    if (yr < A + 4 || yr > H) continue;
+    const d = yr - A;
+    X.globalAlpha = Math.max(0, 0.42 * (1 - d / 640)) * (0.75 + 0.25 * Math.sin(s * 0.11 + TAU * 2 * t / 6));
+    const wob = 7 * Math.sin(s * 0.05 - TAU * 3 * t / 6) + 3 * Math.sin(s * 0.17 + TAU * 2 * t / 6);
+    X.drawImage(HC, 0, s, HC.width, 5, Math.round(ox + wob), Math.round(yr), HC.width, 5);
+  }
+  X.globalAlpha = 1;
+  // 7 — névoa baixa sobre a água
+  [ax, ay] = cam(0.8);
+  drawTile(MIST_LO, 1080 * t / 6 + ax, 1250 + ay, 0.6);
+  // garça
+  X.drawImage(HC, ox, oy);
+  // 8 — juncos e aguapés (frente)
+  [ax, ay] = cam(1.35);
+  drawTile(NEAR, 2160 * t / 6 + ax, 30 + ay);
+
+  // papel por cima de tudo
+  X.setTransform(1, 0, 0, 1, 0, 0);
+  X.globalCompositeOperation = 'multiply';
+  X.drawImage(GRAIN, 0, 0);
+  X.globalCompositeOperation = 'source-over';
+  X.globalAlpha = 0.92; X.drawImage(SEAL, 930, 300, 64, 64); X.globalAlpha = 1;
+}
+
+function loop(ts){ frame(ts); requestAnimationFrame(loop); }
+frame(performance.now());
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

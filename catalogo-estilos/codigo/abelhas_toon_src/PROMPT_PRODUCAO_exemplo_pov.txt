@@ -1,0 +1,82 @@
+Crie o reel "E se as abelhas sumissem?" no mais alto nível profissional possível, usando os arquivos da pasta <pasta_reels>/todo/abelhas_e_se. Objetivo: prender nos 2 primeiros segundos, fazer a pessoa sentir o cenário no próprio café da manhã, COMENTAR o próximo "E se" e PLAY, levar a seguir o perfil, e despertar a pergunta "como isso foi feito só com IA?".
+
+ARQUIVOS
+- Narração (voz clonada no ElevenLabs): narracao_abelhas.mp3, na raiz da pasta (cerca de 72 s). Se o arquivo tiver outro nome, use o .mp3 da raiz da pasta.
+- Referência de formato: referencias/culturaverso_ozonio.mp4 (@culturaverso.br, "E se a camada de ozônio desaparecesse?", 399 mil views). Estude a abertura em primeira pessoa (as mãos de quem assiste), a catástrofe em escada e o pedido do próximo "E se". NUNCA copie quadros, personagens, o humor regional, a praia, a paleta nem a identidade visual da conta. Nada de personagens falando: a única voz é a narração.
+- Imagens: não há imagens fornecidas; gere tudo. Se eu colocar arquivos em assets\, use-os conforme o LEIA-ME.txt. Não use nada da pasta originais\.
+- Roteiro de apoio: ROTEIRO_v1.md (texto, blocos, fontes, legenda) e NARRACAO_ELEVENLABS.md.
+- Salve tudo o que gerar em: <pasta_reels>/todo/abelhas_e_se/saida/
+
+FORMATO
+MP4 1080x1920 (Instagram Reels), 30fps, duração = duração da narração já editada. Transcreva a narração com tempo por palavra e sincronize cada corte, fruta que some, selo e legenda com a fala. Se a fala gravada diferir do roteiro, legenda e cenas seguem o áudio. "mamangavas", "polinizadores", "maracujá", "E se" escritos assim nas legendas; "IA" e "PLAY" sempre em maiúsculas; "Do Prompt ao Play" escrito assim. Números em algarismos ("3 em cada 4", "1º dia", "R$ 43 bilhões"). Se não conseguir transcrever, me mostre os cortes propostos antes de renderizar.
+
+SOM (a narração é a prioridade)
+- Edite a narração antes de animar: remova silêncios longos e erros de leitura, mas mantenha a pausa curta antes de "hoje, todas elas somem" e antes de "E repara: nenhuma dessas flores é de verdade" (a virada). Não mexa no timbre nem na velocidade da voz clonada.
+- Mix final: -14 LUFS integrado, pico de -1 dBTP, medidos com ffmpeg -af ebur128 no estéreo final; voz sozinha ~-15 LUFS; música e efeitos pelo menos 18 LU abaixo da voz em janelas de 1 s onde há fala.
+- Música: começa clara e doce (manhã, marimba ou piano leve) e vai perdendo instrumentos a cada degrau da escada, até sobrar só uma nota no "mais sem cor"; ducking por sidechain (10 a 12 dB, ~50/400 ms) e corte de 4 a 6 dB entre 1 e 4 kHz durante a fala. Depois da virada, um pulso eletrônico suave.
+- Efeitos: poucos e com motivo, de 10 a 14 no total: zumbido curto de abelha no gancho (que corta seco no "sumissem"), café caindo na xícara, faca cortando a laranja, flor murchando, banca da feira esvaziando, pincel na flor, moedas empilhando no R$ 43 bilhões, vento no trigo, "pop" do comentário. Nunca em cima de número.
+- Silêncio total de música e efeitos em "E repara: nenhuma dessas flores é de verdade".
+- Fontes de som: Openverse (https://api.openverse.org/v1/audio/), só license=cc0,by, sem o parâmetro category (se falhar, curl). Se não der, reels/_biblioteca_som ou gere por código, e me avise.
+
+REGRAS OBRIGATÓRIAS
+- Todo fato na tela é o da fala e da fonte (ROTEIRO_v1.md, Fontes): segundo o relatório BPBES/REBIPP (2019), 3 em cada 4 plantas usadas como alimento no Brasil (76%) dependem de algum polinizador, e as abelhas são as principais; o maracujá depende das mamangavas e, sem elas, o produtor poliniza à mão; café, laranja, maçã e soja perdem parte da colheita (não toda); o serviço vale cerca de R$ 43 bilhões por ano; arroz, milho e trigo são polinizados pelo vento e continuam.
+- É um cenário imaginado, não uma previsão: a comida não acaba e ninguém passa fome na tela. O fim é o prato mais caro e mais sem cor, não uma catástrofe.
+- A primeira pessoa (POV) é só visual: as mãos genéricas de quem assiste passando o café e cortando a laranja. Nenhum personagem fala, e nenhuma boca se mexe.
+
+MÃOS E BRAÇOS NA PRIMEIRA PESSOA (capriche: é o que mais denuncia vídeo amador)
+- Anatomia certa em todo quadro: 5 dedos com 3 falanges cada (o polegar com 2), articulações dobrando só para o lado certo, proporção real entre palma e dedos, unhas curtas e limpas com cutícula, tendões e nós dos dedos visíveis no dorso, veias bem sutis, dobras na palma e nos nós.
+- Pele realista: subsurface scattering (a luz atravessa a ponta dos dedos e as bordas), textura de poros e linhas finas, rugosidade variando (dorso mais seco, palma mais lisa), leve vermelhidão nos nós e nas pontas. Tom de pele neutro e genérico, sem anel, relógio, esmalte ou tatuagem.
+- Braços: entram pelas bordas de baixo do quadro, como se viessem dos ombros de quem assiste, nunca flutuando. Antebraço com pelos finos e manga de camiseta ou moletom de cor neutra cobrindo o encaixe, para não aparecer o corte do modelo.
+- Rig e movimento: esqueleto com osso por falange e IK no punho e nos dedos. Os dedos se fecham em volta do objeto ao pegar, o punho gira junto com a ação, e os movimentos têm aceleração e desaceleração naturais (nada de mão robótica ou deslizando). Um leve balanço de câmera, de quem está de pé na cozinha e na feira, sem enjoar.
+- Contato: dedos encostam no objeto sem atravessá-lo, com sombra de contato e a pele achatando de leve onde aperta (a faca, a xícara, a laranja, o pincel). A faca entra na laranja e o suco escorre de verdade.
+- Câmera: lente equivalente a 24 a 28 mm, foco nas mãos e no objeto, profundidade de campo rasa. Nada de mão deformada nas bordas pela lente.
+- Antes de renderizar o vídeo, confira cada plano com mãos em quadros parados e com zoom: contagem de dedos, dedos se atravessando, punho torcido, braço saindo do lugar errado. Se algum quadro falhar, corrija antes de seguir.
+- Se usar modelo de mão baixado, só CC0 ou CC BY e com crédito; senão, modele.
+- Abelhas e mamangavas carismáticas e bonitas, nunca assustadoras; nada de enxame ameaçador nem abelhas mortas no chão.
+- No "Comenta qual vai ser o próximo E se", a tela mostra um campo de comentário digitando "E se…" com reticências piscando.
+- Imagens, modelos 3D, sons e músicas baixados de fora: apenas domínio público, CC0 ou CC BY.
+- Abaixo são sugestões; o mais importante é o vídeo estar de acordo com a narração.
+
+CONFERÊNCIA ANTES DE ENTREGAR
+- O primeiro quadro já tem ação: uma abelha pousando numa flor de laranjeira, que some num estalo no "sumissem". Texto de tela do gancho: "E SE AS ABELHAS / SUMISSEM?" (2 linhas). Os 2 primeiros segundos prendem mesmo sem som.
+- Em "Tudo isso passou por uma abelha", uma abelha translúcida passa por cima do café e da laranja, como um rastro.
+- Na direção em primeira pessoa (C), nenhum quadro com mãos tem dedo a mais ou a menos, dedo atravessando objeto, punho torcido ou braço solto no ar. Mande junto com o vídeo 3 quadros parados em close das mãos (café, laranja, pincel na flor).
+- Em "3 em cada 4 plantas", uma feira em plano aberto com 3 de cada 4 bancas acendendo; selo "relatório BPBES".
+- A escada é visível: a cada degrau ("primeiro dia", "maracujá", "café, laranja e maçã", "soja"), a feira perde cor e frutas, e um contador de bancas vazias sobe.
+- Momento de compartilhar: o prato do café da manhã do começo, agora com metade das cores sumida, em "Mas o prato fica mais caro e mais sem cor".
+- Na frase do PLAY, o botão "Seguir" é tocado, o campo de comentário digita "PLAY" e "Do Prompt ao Play" aparece com um botão de play laranja.
+- Teste de clareza da voz: transcreva o áudio final e compare com a narração limpa; se alguma palavra sumir, baixe os efeitos daquele trecho. Informe LUFS integrado (ebur128), voz sozinha, fundo sob a fala (pior janela de 1 s) e número de efeitos.
+- Nenhum texto cortado, sobreposto ou fora da área segura do Reels (nada importante nos 250px de cima nem nos 400px de baixo).
+- Ritmo: troca de cena a cada 2 a 4 s, nada parado por mais de 2,5 s.
+- O último quadro é igual ao primeiro (a abelha na flor de laranjeira), para o loop.
+
+ENTREGA (na pasta saida/)
+1. Primeiro, 3 direções visuais diferentes, com 4 quadros de prévia cada (o gancho com a abelha e o texto de tela; o POV do café e da laranja com o rastro da abelha; a banca do maracujá vazia com o pincel polinizando à mão; o prato pela metade sem cor), mais um quadro da virada para IA comum às três. NÃO produza o vídeo antes do meu ok numa direção.
+   A. Maquete de brinquedo com tilt-shift (a direção do Sisteminha): uma feira e uma cozinha em miniatura de plástico fosco sobre uma tábua numa mesa de madeira, luz de manhã, desfoque nas bordas.
+   B. Toon 3D com contorno preto (a direção do shiitake e da milpa): cores chapadas e saturadas que vão se apagando, squash and stretch (a abelha quica no ar, as frutas murcham e caem quicando).
+   C. OBRIGATÓRIA: primeira pessoa (POV), 3D realista. A câmera é o olhar de quem assiste, na altura dos olhos, e as mãos e os braços de quem assiste fazem cada ação no momento da fala: passar o café, cortar a laranja, pegar o maracujá na feira, segurar o pincel na flor, segurar o prato. Os números viram selos presos aos objetos que as mãos tocam. As mãos e os braços são a peça mais importante desta direção (ver "MÃOS E BRAÇOS NA PRIMEIRA PESSOA" abaixo). Nas prévias da C, um dos 4 quadros é um close das mãos segurando a laranja e a faca, para eu avaliar a modelagem.
+2. Depois do meu ok: reel_abelhas.mp4, reel_abelhas_sem_efeitos.mp4 (só voz e música), capa_abelhas.jpg (1080x1920, o prato de café da manhã dividido ao meio, metade colorida e metade cinza, texto de capa "E SE AS ABELHAS SUMISSEM?", sem selos por cima do texto) e CREDITOS.txt com título, autor, licença e link de cada recurso externo.
+
+Abaixo seguem sugestões. Você tem liberdade criativa; isto são só sugestões, inclusive o roteiro visual:
+
+ESTILO
+- Duas camadas visuais: "o mundo" (cores quentes de manhã que vão perdendo saturação a cada degrau, até quase cinza no fim) e "IA" (fundo azul-tinta #0B1026, motion graphics modernos, destaque único em laranja #FF6B2C).
+- Selos (etiqueta arredondada com ícone laranja): "relatório BPBES", "3 em cada 4", "1º dia", "polinização à mão", "parte da colheita", "R$ 43 bi/ano", "polinizado pelo vento".
+- Legenda única, grande (Space Grotesk Bold ~90px), terço inferior, máx. 2 linhas, sombra forte, números em laranja, nunca sobre a abelha; some quando a tela já escreve o mesmo.
+
+ROTEIRO VISUAL
+1. "E se as abelhas sumissem?" Uma abelha pousa numa flor de laranjeira e some num estalo. Texto de tela do gancho.
+2. "Você acorda, passa o café e corta uma laranja. Tudo isso passou por uma abelha." POV: as mãos passam o café e cortam a laranja; uma abelha translúcida deixa um rastro por cima de cada um.
+3. "Segundo o relatório brasileiro sobre polinizadores, 3 em cada 4 plantas que viram comida aqui dependem de algum bicho para virar fruto. E as abelhas são as principais." Feira em plano aberto; 3 de cada 4 bancas acendem; selos "relatório BPBES" e "3 em cada 4".
+4. "Agora imagina: hoje, todas elas somem." As abelhas do céu se apagam uma a uma.
+5. "No primeiro dia, ninguém percebe. As flores continuam abrindo. Só que muitas não viram fruto." Flores abrindo normalmente; as sem fruto murcham e caem; selo "1º dia".
+6. "Na feira, o maracujá some primeiro. Sem as mamangavas, a flor não vinga, e o produtor tem que passar o pólen à mão, flor por flor." A banca do maracujá esvazia; uma mamangava se apaga; mãos com pincel passando pólen flor por flor; selo "polinização à mão".
+7. "Depois vêm o café, a laranja e a maçã, que perdem parte da colheita. A soja, que vira ração do frango e do porco, também." As bancas perdem parte das frutas (não todas); um saco de ração com um frango e um porco de brinquedo; selo "parte da colheita".
+8. "Essa ajuda das abelhas vale uns R$ 43 bilhões por ano na comida do Brasil." Moedas e notas sobem numa pilha sobre o mapa do Brasil; selo "R$ 43 bi/ano".
+9. "O arroz, o milho e o trigo continuam, porque quem poliniza eles é o vento. A comida não acaba. Mas o prato fica mais caro e mais sem cor." O vento balança o trigo; volta o prato do café da manhã, cheio, mas com metade das cores sumida (momento de compartilhar).
+10. "Comenta qual vai ser o próximo E se." Campo de comentário digitando "E se…".
+11. Virada (em "E repara: nenhuma dessas flores é de verdade. Uma IA fez tudo, até a minha voz"): a música para; as flores congelam e viram wireframe e partículas laranja; a onda da voz vira um rosto de linhas.
+12. "Comenta PLAY…" Seguir, PLAY, "Do Prompt ao Play". Último quadro igual ao primeiro.
+
+Observação final:
+Animação limpa com cara de profissional; preciso do vídeo o mais bonito possível.
